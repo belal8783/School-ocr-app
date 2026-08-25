@@ -1,0 +1,5 @@
+streamlit
+vertexai
+google-cloud-aiplatform
+python-docx
+Pillow
