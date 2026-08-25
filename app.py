@@ -1,101 +1,89 @@
-import streamlit as st
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+import os
+import google.generativeai as genai
 from docx import Document
-import io
-from PIL import Image
+from io import BytesIO
+import PIL.Image
+import streamlit as st
 
-# Vertex AI ইনিশিয়ালাইজেশন
-vertexai.init(project="school-shet-ocr", location="us-central1")
-model = GenerativeModel("gemini-2.5-flash")
+# Streamlit secrets থেকে API Key পড়া
+api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 
-st.set_page_config(page_title="Advanced School Sheet OCR", layout="wide")
-st.title("📚 School Sheet Handwritten to Word & PDF Agent")
+if api_key:
+    genai.configure(api_key=api_key)
+
+st.set_page_config(
+    page_title="School Sheet Handwritten to Word & PDF Agent", layout="wide"
+)
+
+st.title("School Sheet Handwritten to Word & PDF Agent")
 st.write("বাংলা, ইংরেজি, আরবি ও গণিতের হাতে লেখা শিটের ছবি কনভার্ট ও এডিট করুন।")
 
-# সেশন স্টেট ইনিশিয়ালাইজ করা (ডাটা ধরে রাখার জন্য)
-if "extracted_texts" not in st.session_state:
-    st.session_state.extracted_texts = []
-
+# একাধিক ফাইল (সর্বোচ্চ ৫০টি) আপলোডের সুবিধা
 uploaded_files = st.file_uploader(
-    "আপনার শিটের ছবিগুলো আপলোড করুন (সর্বোচ্চ ৫০টি)", 
-    type=["jpg", "jpeg", "png"], 
-    accept_multiple_files=True
+    "আপনার শিটের ছবিগুলো একসাথে আপলোড করুন (সর্বোচ্চ ৫০টি)",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
 )
 
 if uploaded_files:
     if len(uploaded_files) > 50:
-        st.error("⚠️ একসাথে সর্বোচ্চ ৫০টি ছবি আপলোড করা যাবে।")
-    else:
-        st.success(f"মোট {len(uploaded_files)}টি ছবি সিলেক্ট করা হয়েছে।")
-        
-        if st.button("🚀 Process & Extract Text"):
-            st.session_state.extracted_texts = [] # নতুন প্রসেসের জন্য খালি করা
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+        st.warning("আপনি ৫০টির বেশি ফাইল সিলেক্ট করেছেন! প্রথম ৫০টি ফাইল প্রসেস করা হবে।")
+        uploaded_files = uploaded_files[:50]
 
-            prompt = """
-            You are an expert OCR agent proficient in Bengali, English, Arabic, and Mathematics. 
-            Extract all text, math formulas, equations, symbols, and diagrams from this handwritten school sheet with high accuracy.
+    if st.button("কনভার্ট করা শুরু করুন"):
+        if not api_key:
+            st.error(
+                "Gemini API Key পাওয়া যায়নি! অনুগ্রহ করে Streamlit Secrets-এ"
+                " GEMINI_API_KEY সেট করুন।"
+            )
+        else:
+            with st.spinner("ছবিগুলো প্রসেস করা হচ্ছে... অনুগ্রহ করে অপেক্ষা করুন"):
+                try:
+                    # সবচেয়ে দ্রুত ও আধুনিক মডেল ব্যবহার করা হচ্ছে
+                    model = genai.GenerativeModel("gemini-2.0-flash")
 
-            Instructions:
-            1. Preserve original layout and sequence.
-            2. For Arabic text, maintain right-to-left order, vowels/harakat.
-            3. For Mathematics, express equations in clear standard readable format or LaTeX math notation.
-            4. For Diagrams, describe them and transcribe labels inside.
-            """
+                    full_text = ""
+                    for idx, uploaded_file in enumerate(uploaded_files):
+                        st.write(f"প্রসেস করা হচ্ছে ({idx+1}/{len(uploaded_files)}): {uploaded_file.name}")
+                        image = PIL.Image.open(uploaded_file)
 
-            for i, file in enumerate(uploaded_files):
-                status_text.text(f"প্রসেস করা হচ্ছে ({i+1}/{len(uploaded_files)}): {file.name}...")
-                image_bytes = file.getvalue()
-                image_part = Part.from_data(data=image_bytes, mime_type=file.type)
-                
-                response = model.generate_content([prompt, image_part])
-                
-                # সেশন স্টেটে টেক্সট সেভ করা
-                st.session_state.extracted_texts.append({
-                    "file_name": file.name,
-                    "text": response.text
-                })
-                progress_bar.progress((i + 1) / len(uploaded_files))
+                        prompt = """
+                        You are an expert OCR model specializing in converting school sheets, manuscripts, and test papers.
+                        Extract all text accurately from the provided image.
+                        Preserve languages: Bengali, English, Arabic, and Mathematical formulas.
+                        Format tables, headers, and bullet points properly.
+                        """
 
-            status_text.success("🎉 সফলভাবে প্রসেস করা হয়েছে! নিচে আপনি এটি রিভিউ ও এডিট করতে পারেন।")
+                        response = model.generate_content([prompt, image])
+                        full_text += (
+                            f"\n--- পৃষ্ঠা {idx + 1}: {uploaded_file.name} ---\n\n"
+                        )
+                        full_text += response.text + "\n\n"
 
-# যদি ডাটা প্রসেসড থাকে, তবে এডিটিং ও ডাউনলোডের অপশন দেখাবে
-if st.session_state.extracted_texts:
-    st.markdown("---")
-    st.subheader("✏️ রিভিউ এবং প্রয়োজনীয় পরিবর্তন করুন (Editable Output)")
+                    st.success("সবগুলো ফাইলের টেক্সট সফলভাবে এক্সট্র্যাক্ট করা হয়েছে!")
+                    edited_text = st.text_area(
+                        "এক্সট্র্যাক্ট করা টেক্সট (প্রয়োজনে এডিট করুন):",
+                        full_text,
+                        height=400,
+                    )
 
-    updated_results = []
-    
-    # প্রতিটি পেজের জন্য আলাদা এডিটর বক্স
-    for idx, item in enumerate(st.session_state.extracted_texts):
-        st.write(f"**Page {idx+1}: {item['file_name']}**")
-        edited_text = st.text_area(
-            label=f"এডিট করুন (Page {idx+1})",
-            value=item["text"],
-            height=200,
-            key=f"editor_{idx}"
-        )
-        updated_results.append({"file_name": item["file_name"], "text": edited_text})
+                    # Word File Generation
+                    doc = Document()
+                    doc.add_heading("School Sheet Text Output", 0)
+                    for para in edited_text.split("\n"):
+                        if para.strip():
+                            doc.add_paragraph(para)
 
-    st.markdown("---")
-    st.subheader("📥 ফাইল ডাউনলোড করুন")
+                    bio = BytesIO()
+                    doc.save(bio)
+                    bio.seek(0)
 
-    # ১. ওয়ার্ড ফাইল তৈরি
-    doc = Document()
-    for idx, item in enumerate(updated_results):
-        doc.add_heading(f"Page {idx+1} - {item['file_name']}", level=2)
-        doc.add_paragraph(item["text"])
-        doc.add_page_break()
+                    st.download_button(
+                        label="Word (.docx) হিসেবে ডাউনলোড করুন",
+                        data=bio,
+                        file_name="Converted_School_Sheets.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
 
-    doc_io = io.BytesIO()
-    doc.save(doc_io)
-    doc_io.seek(0)
-
-    st.download_button(
-        label="📄 Download Word File (.docx)",
-        data=doc_io,
-        file_name="Converted_School_Sheets.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
+                except Exception as e:
+                    st.error(f"একটি ত্রুটি ঘটেছে: {e}")
