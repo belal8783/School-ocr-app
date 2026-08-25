@@ -15,10 +15,10 @@ st.set_page_config(
     page_title="School Sheet Handwritten to Word & PDF Agent", layout="wide"
 )
 
-st.title("School Sheet Handwritten to Word & PDF Agent")
+st.title("Handwritten to Word & PDF Agent")
 st.write("বাংলা, ইংরেজি, আরবি ও গণিতের হাতে লেখা শিটের ছবি কনভার্ট ও এডিট করুন।")
 
-# একাধিক ফাইল (সর্বোচ্চ ৫০টি) আপলোডের সুবিধা
+# একসাথে সর্বোচ্চ ৫০টি ফাইল আপলোডের সুবিধা
 uploaded_files = st.file_uploader(
     "আপনার শিটের ছবিগুলো একসাথে আপলোড করুন (সর্বোচ্চ ৫০টি)",
     type=["jpg", "jpeg", "png"],
@@ -39,8 +39,8 @@ if uploaded_files:
         else:
             with st.spinner("ছবিগুলো প্রসেস করা হচ্ছে... অনুগ্রহ করে অপেক্ষা করুন"):
                 try:
-                    # সবচেয়ে দ্রুত ও আধুনিক মডেল ব্যবহার করা হচ্ছে
-                    model = genai.GenerativeModel("gemini-2.0-flash")
+                    # সঠিক ও আপডেট মডেল নাম ব্যবহার করা হলো
+                    model = genai.GenerativeModel("gemini-1.5-flash")
 
                     full_text = ""
                     for idx, uploaded_file in enumerate(uploaded_files):
