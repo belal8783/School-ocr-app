@@ -40,7 +40,7 @@ if uploaded_files:
             with st.spinner("ছবিগুলো প্রসেস করা হচ্ছে... অনুগ্রহ করে অপেক্ষা করুন"):
                 try:
                     # সঠিক ও আপডেট মডেল নাম ব্যবহার করা হলো
-                    model = genai.GenerativeModel("gemini-1.5-flash")
+                    model = genai.GenerativeModel("gemini-2.5-flash")
 
                     full_text = ""
                     for idx, uploaded_file in enumerate(uploaded_files):
