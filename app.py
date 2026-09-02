@@ -1,121 +1,222 @@
 import os
+import io
+import re
+import streamlit as st
 import google.generativeai as genai
 from docx import Document
-from io import BytesIO
-import PIL.Image
-import streamlit as st
+from docx.shared import Pt, RGBColor
 from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from PIL import Image
+from pdf2image import convert_from_bytes
 
-# Streamlit secrets থেকে API Key পড়া
-api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+# ---------------------------------------------------------
+# Unicode Bengali Cleaning Routine (Fixing Dotted Circles ◌)
+# ---------------------------------------------------------
+def clean_bengali_symbols(text):
+    """
+    বাংলা একা থাকা স্বরচিহ্নের (কার-চিহ্ন) সাথে আসা গোল চিহ্ন (Dotted Circle / ◌ / \u25cc) মুছে ফেলার ফাংশন।
+    """
+    if not text:
+        return ""
+    # Unicode Dotted Circle (\u25cc বা ◌) রিমুভ করা
+    cleaned_text = re.sub(r'\u25cc', '', text)
+    cleaned_text = cleaned_text.replace('◌', '')
+    return cleaned_text
 
-if api_key:
-    genai.configure(api_key=api_key)
+# ---------------------------------------------------------
+# Unicode to Bijoy (SutonnyMJ) Converter Utility
+# ---------------------------------------------------------
+def convert_unicode_to_bijoy(text):
+    if not text:
+        return ""
+    conversions = {
+        'অ': 'A', 'আ': 'Av', 'ই': 'Bi', 'ঈ': 'C', 'উ': 'D', 'ঊ': 'E', 'ঋ': 'F', 'এ': 'G', 'ঐ': 'H', 'ও': 'I', 'ঔ': 'J',
+        'ক': 'k', 'খ': 'L', 'গ': 'M', 'ঘ': 'N', 'ঙ': 'O',
+        'চ': 'P', 'ছ': 'Q', 'জ': 'R', 'ঝ': 'S', 'ঞ': 'T',
+        'ট': 'U', 'ঠ': 'V', 'ড': 'W', 'ঢ': 'X', 'ণ': 'Y',
+        'ত': 'Z', 'থ': '_', 'দ': 'b', 'ধ': 'c', 'ন': 'd',
+        'প': 'e', 'ফ': 'f', 'ব': 'g', 'ভ': 'h', 'ম': 'm',
+        'য': 'n', 'র': 'r', 'ল': 'l', 'শ': 'k', 'ষ': 'l', 'স': 'm', 'হ': 'n', 'ড়': 'o', 'ঢ়': 'p', 'য়': 'q',
+        'া': 'v', 'ি': 'w', 'ী': 'x', 'ু': 'y', 'ূ': 'z', 'ৃ': 'A', 'ে': 'B', 'ৈ': 'C', 'ো': 'Dv', 'ৌ': 'Dv',
+        '্': '', 'ং': 's', 'ঃ': 't', 'ঁ': 'u'
+    }
+    converted_text = text
+    for u_char, b_char in conversions.items():
+        converted_text = converted_text.replace(u_char, b_char)
+    return converted_text
 
+# ---------------------------------------------------------
+# Page Config & Branding
+# ---------------------------------------------------------
 st.set_page_config(
-    page_title="School Sheet Handwritten to Word & PDF Agent", layout="wide"
+    page_title="Handwritten to Word & PDF Agent",
+    page_icon="📝",
+    layout="wide"
 )
 
-st.title("Handwritten to Word & PDF Agent")
-st.write("বাংলা, ইংরেজি, আরবি ও গণিতের হাতে লেখা শিটের ছবি কনভার্ট ও এডিট করুন।")
+st.title("📝 School Sheet Handwritten to Word & PDF Agent")
+st.caption("Developed by: Belal Hossain | আপনার স্কুলের হাতের লেখা শিট ও পিডিএফ কনভার্ট করুন")
+st.write("বাংলা, ইংরেজি, আরবি, গণিত, কাটাকাটি সংশোধন ও ছক সম্বলিত ছবি/পিডিএফ ফাইল সহজে ওয়ার্ড ও পিডিএফে কনভার্ট করুন।")
 
-# ফাইল আপলোড বক্স
+# ---------------------------------------------------------
+# Sidebar Options
+# ---------------------------------------------------------
+st.sidebar.header("⚙️ টেক্সট কাস্টমাইজেশন সেটিং")
+
+font_size = st.sidebar.slider("ফন্ট সাইজ (Font Size)", min_value=10, max_value=24, value=12, step=1)
+
+font_type = st.sidebar.selectbox(
+    "ফন্ট টাইপ নির্বাচন করুন",
+    ["Avro / Unicode (Kalpurush)", "Bijoy 52 (SutonnyMJ)"]
+)
+font_name = "SutonnyMJ" if "SutonnyMJ" in font_type else "Kalpurush"
+
+# ---------------------------------------------------------
+# API Key Configuration
+# ---------------------------------------------------------
+api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+if not api_key:
+    api_key = st.text_input("Gemini API Key দিন:", type="password")
+
+if not api_key:
+    st.info("অ্যাপটি চালাতে Gemini API Key সরবরাহ করতে হবে।")
+    st.stop()
+
+genai.configure(api_key=api_key)
+model = genai.GenerativeModel('gemini-3.6-flash')
+
+# ---------------------------------------------------------
+# File Upload (Images & PDF Allowed)
+# ---------------------------------------------------------
 uploaded_files = st.file_uploader(
-    "আপনার শিটের ছবিগুলো একসাথে সিলেক্ট করুন (সর্বোচ্চ ৫০টি)",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True,
+    "আপনার শিটের ছবি (JPG, PNG) অথবা PDF ফাইল আপলোড করুন (সর্বোচ্চ ৫০টি ছবি/১০MB PDF)",
+    type=["jpg", "jpeg", "png", "pdf"],
+    accept_multiple_files=True
 )
 
-if uploaded_files:
-    if len(uploaded_files) > 50:
-        st.warning("আপনি ৫০টির বেশি ফাইল সিলেক্ট করেছেন! প্রথম ৫০টি প্রসেস করা হবে।")
-        uploaded_files = uploaded_files[:50]
+custom_filename = st.text_input("ডাউনলোড ফাইলের নাম লিখুন:", value="Converted_School_Sheet")
 
-    # নতুন ফিচার: ইউজার নিজের মতো ফাইলের নাম দিতে পারবে
-    custom_filename = st.text_input(
-        "ডাউনলোড করার ফাইলের নাম লিখুন (এক্সটেনশন ছাড়া):",
-        value="Converted_School_Sheets"
+# ---------------------------------------------------------
+# Master AI Prompt
+# ---------------------------------------------------------
+SYSTEM_PROMPT = """
+আপনি একজন বিশেষজ্ঞ OCR ও ডকুমেন্ট কনভার্সন সিস্টেম। 
+আপনাকে দেয়া হ্যান্ডরিটেন শিট বা পেজের ছবি থেকে তথ্যগুলো নিখুঁতভাবে টেক্সটে রূপান্তর করুন।
+
+প্রধান নির্দেশাবলী:
+১. **কাটাকাটি বা বাতিলকৃত লেখা (Crossed-out text):**
+   - শিটে যদি কোনো শব্দ, সংখ্যা বা লাইন দাগ দিয়ে কেটে দেওয়া থাকে, সেটি আউটপুটে পুরোপুরি বাদ দিন। 
+   - কেটে দেওয়ার পর আশেপাশে (উপরে/নিচে/পাশে) যে নতুন সংশোধনটি লেখা হয়েছে, শুধুমাত্র সেটিই আউটপুটে গ্রহণ করুন।
+
+২. **ছক ও টেবিল (Tables & Grids):**
+   - কোনো ছক বা ঘর থাকলে সেটি Markdown Table (যেমন: | কলাম ১ | কলাম ২ |) হিসেবে কলাম ও সারি ঠিক রেখে রূপান্তর করুন। 
+   - ঘরের ভেতর বাংলা, ইংরেজি, অংক বা আরবি যাই থাকুক না কেন, নির্দিষ্ট ঘরের ভেতরেই রাখুন।
+
+৩. **ছবি বা ইলাস্ট্রেশনের নির্দেশ (Image Instructions):**
+   - শিটে যদি লেখা থাকে "এখানে একটি বাঘের ছবি হবে", "পাখির ছবি আঁকুন" ইত্যাদি, তবে সেটিকে **[ইমেজ নোট: এখানে একটি বাঘের ছবি হবে]** এভাবে ব্র্যাকেটে বোল্ড আকারে তুলে ধরুন।
+
+৪. **বাংলা কার-চিহ্ন ও প্রতীক:**
+   - বাংলা আকার, একার, ওকার, ঋ-কার ইত্যাদি কার-চিহ্ন আলাদা লেখা থাকলে কোনো বাড়তি গোল দাগ বা ডটেড চিহ্ন (◌) ব্যবহার করবেন না। সরাসরি শুধু কার-চিহ্নটি (যেমন: া, ি, ো, ৃ) আউটপুটে লিখুন।
+
+৫. **সাধারণ টেক্সট ও ভাষা:**
+   - বাংলা, ইংরেজি, আরবি ও গাণিতিক সমীকরণগুলো যেভাবে লেখা আছে হুবহু তুলে আনুন।
+"""
+
+# ---------------------------------------------------------
+# Document Generators
+# ---------------------------------------------------------
+def create_word_docx(text, font_name, font_size):
+    doc = Document()
+    processed_text = convert_unicode_to_bijoy(text) if font_name == "SutonnyMJ" else text
+    
+    for line in processed_text.split('\n'):
+        p = doc.add_paragraph()
+        run = p.add_run(line)
+        run.font.name = font_name
+        run.font.size = Pt(font_size)
+        
+        if "[ইমেজ নোট:" in line:
+            run.font.bold = True
+            run.font.color.rgb = RGBColor(180, 50, 50)
+            
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+def create_pdf(text, font_size):
+    buffer = io.BytesIO()
+    pdf = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    
+    custom_style = ParagraphStyle(
+        'CustomStyle',
+        parent=styles['Normal'],
+        fontSize=font_size,
+        leading=font_size + 4
     )
+    
+    story = []
+    for line in text.split('\n'):
+        if line.strip():
+            safe_line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            story.append(Paragraph(safe_line, custom_style))
+            story.append(Spacer(1, 4))
+            
+    pdf.build(story)
+    buffer.seek(0)
+    return buffer
 
-    if st.button("কনভার্ট করা শুরু করুন"):
-        if not api_key:
-            st.error("Gemini API Key পাওয়া যায়নি!")
-        else:
-            with st.spinner("ছবিগুলো প্রসেস করা হচ্ছে... অনুগ্রহ করে অপেক্ষা করুন"):
-                try:
-                    model = genai.GenerativeModel("gemini-3.6-flash")
+# ---------------------------------------------------------
+# Main Execution Logic
+# ---------------------------------------------------------
+if uploaded_files and st.button("🚀 কনভার্ট শুরু করুন"):
+    combined_result = ""
+    images_to_process = []
 
-                    full_text = ""
-                    for idx, uploaded_file in enumerate(uploaded_files):
-                        st.write(f"প্রসেস করা হচ্ছে ({idx+1}/{len(uploaded_files)}): {uploaded_file.name}")
-                        image = PIL.Image.open(uploaded_file)
+    with st.spinner("ফাইল প্রস্তুত করা হচ্ছে..."):
+        for uploaded_file in uploaded_files:
+            if uploaded_file.name.endswith(".pdf"):
+                pdf_bytes = uploaded_file.read()
+                converted_images = convert_from_bytes(pdf_bytes)
+                images_to_process.extend(converted_images)
+            else:
+                images_to_process.append(Image.open(uploaded_file))
 
-                        prompt = """
-                        You are an expert OCR model specializing in converting school sheets, manuscripts, and test papers.
-                        Extract all text accurately from the provided image.
-                        Preserve languages: Bengali, English, Arabic, and Mathematical formulas.
-                        Format tables, headers, and bullet points properly.
-                        """
+    with st.spinner(f"Gemini AI মোট {len(images_to_process)} টি পেজ প্রসেস করছে..."):
+        for index, img in enumerate(images_to_process):
+            response = model.generate_content([SYSTEM_PROMPT, img])
+            # স্বরচিহ্নের গোল দাগ রিমুভ করার জন্য clean_bengali_symbols কল করা হয়েছে
+            cleaned_page_text = clean_bengali_symbols(response.text)
+            
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n"
+            combined_result += cleaned_page_text
 
-                        response = model.generate_content([prompt, image])
-                        full_text += f"\n--- পৃষ্ঠা {idx + 1}: {uploaded_file.name} ---\n\n"
-                        full_text += response.text + "\n\n"
+    st.success("✅ সফলভাবে সব ফাইল কনভার্ট সম্পন্ন হয়েছে!")
 
-                    st.success("সবগুলো ফাইলের টেক্সট সফলভাবে এক্সট্র্যাক্ট করা হয়েছে!")
-                    edited_text = st.text_area(
-                        "এক্সট্র্যাক্ট করা টেক্সট (প্রয়োজনে এডিট করুন):",
-                        full_text,
-                        height=350,
-                    )
+    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
+    st.text_area("আউটপুট টেক্সট:", combined_result, height=300)
 
-                    # ফাইনাল ফাইল নেম নির্ধারণ (ইউজার নাম না দিলে ডিফল্ট নাম থাকবে)
-                    safe_filename = "".join(c for c in custom_filename if c.isalnum() or c in (' ', '_', '-')).strip()
-                    if not safe_filename:
-                        safe_filename = "Converted_School_Sheets"
+    col1, col2 = st.columns(2)
+    
+    word_file = create_word_docx(combined_result, font_name, font_size)
+    pdf_file = create_pdf(combined_result, font_size)
 
-                    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="📄 Word (.docx) ডাউনলোড করুন",
+            data=word_file,
+            file_name=f"{custom_filename}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
-                    # 1. Word File Generation
-                    doc = Document()
-                    doc.add_heading("School Sheet Text Output", 0)
-                    for para in edited_text.split("\n"):
-                        if para.strip():
-                            doc.add_paragraph(para)
-
-                    doc_io = BytesIO()
-                    doc.save(doc_io)
-                    doc_io.seek(0)
-
-                    with col1:
-                        st.download_button(
-                            label="📄 Word (.docx) ডাউনলোড করুন",
-                            data=doc_io,
-                            file_name=f"{safe_filename}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        )
-
-                    # 2. PDF Generation
-                    pdf_io = BytesIO()
-                    c = canvas.Canvas(pdf_io, pagesize=letter)
-                    textobject = c.beginText()
-                    textobject.setTextOrigin(50, 750)
-                    textobject.setFont("Helvetica", 10)
-
-                    for line in edited_text.split("\n"):
-                        textobject.textLine(line)
-                    c.drawText(textobject)
-                    c.showPage()
-                    c.save()
-                    pdf_io.seek(0)
-
-                    with col2:
-                        st.download_button(
-                            label="📕 PDF (.pdf) ডাউনলোড করুন",
-                            data=pdf_io,
-                            file_name=f"{safe_filename}.pdf",
-                            mime="application/pdf",
-                        )
-
-                except Exception as e:
-                    st.error(f"একটি ত্রুটি ঘটেছে: {e}")
+    with col2:
+        st.download_button(
+            label="📕 PDF (.pdf) ডাউনলোড করুন",
+            data=pdf_file,
+            file_name=f"{custom_filename}.pdf",
+            mime="application/pdf"
+        )
