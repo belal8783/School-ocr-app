@@ -3,3 +3,4 @@ google-generativeai
 python-docx
 reportlab
 Pillow
+pdf2image
