@@ -5,6 +5,8 @@ import streamlit as st
 import google.generativeai as genai
 from docx import Document
 from docx.shared import Pt, RGBColor
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -15,12 +17,8 @@ from pdf2image import convert_from_bytes
 # Unicode Bengali Cleaning Routine (Fixing Dotted Circles ◌)
 # ---------------------------------------------------------
 def clean_bengali_symbols(text):
-    """
-    বাংলা একা থাকা স্বরচিহ্নের (কার-চিহ্ন) সাথে আসা গোল চিহ্ন (Dotted Circle / ◌ / \u25cc) মুছে ফেলার ফাংশন।
-    """
     if not text:
         return ""
-    # Unicode Dotted Circle (\u25cc বা ◌) রিমুভ করা
     cleaned_text = re.sub(r'\u25cc', '', text)
     cleaned_text = cleaned_text.replace('◌', '')
     return cleaned_text
@@ -48,6 +46,12 @@ def convert_unicode_to_bijoy(text):
     return converted_text
 
 # ---------------------------------------------------------
+# Helper to detect Arabic scripts
+# ---------------------------------------------------------
+def is_arabic(text):
+    return bool(re.search(r'[\u0600-\u06FF]', text))
+
+# ---------------------------------------------------------
 # Page Config & Branding
 # ---------------------------------------------------------
 st.set_page_config(
@@ -58,20 +62,34 @@ st.set_page_config(
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
 st.caption("Developed by: Belal Hossain | আপনার স্কুলের হাতের লেখা শিট ও পিডিএফ কনভার্ট করুন")
-st.write("বাংলা, ইংরেজি, আরবি, গণিত, কাটাকাটি সংশোধন ও ছক সম্বলিত ছবি/পিডিএফ ফাইল সহজে ওয়ার্ড ও পিডিএফে কনভার্ট করুন।")
+st.write("বাংলা, ইংরেজি, আরবি, গণিত, হেডিং-আন্ডারলাইন, কাটাকাটি সংশোধন ও ছক সম্বলিত ছবি/পিডিএফ ফাইল সহজে ওয়ার্ড ও পিডিএফে কনভার্ট করুন।")
 
 # ---------------------------------------------------------
 # Sidebar Options
 # ---------------------------------------------------------
-st.sidebar.header("⚙️ টেক্সট কাস্টমাইজেশন সেটিং")
+st.sidebar.header("⚙️ কাস্টমাইজেশন সেটিং")
 
-font_size = st.sidebar.slider("ফন্ট সাইজ (Font Size)", min_value=10, max_value=24, value=12, step=1)
+# ১. ফন্ট সাইজ
+font_size = st.sidebar.slider("মূল টেক্সট ফন্ট সাইজ (Font Size)", min_value=10, max_value=24, value=12, step=1)
 
-font_type = st.sidebar.selectbox(
-    "ফন্ট টাইপ নির্বাচন করুন",
+# ২. বাংলা ফন্ট
+bangla_font_type = st.sidebar.selectbox(
+    "বাংলা ফন্ট নির্বাচন করুন",
     ["Avro / Unicode (Kalpurush)", "Bijoy 52 (SutonnyMJ)"]
 )
-font_name = "SutonnyMJ" if "SutonnyMJ" in font_type else "Kalpurush"
+bangla_font_name = "SutonnyMJ" if "SutonnyMJ" in bangla_font_type else "Kalpurush"
+
+# ৩. ইংরেজি ফন্ট
+english_font_name = st.sidebar.selectbox(
+    "ইংরেজি ফন্ট নির্বাচন করুন",
+    ["Times New Roman", "Calibri", "Arial"]
+)
+
+# ৪. আরবি ফন্ট
+arabic_font_name = st.sidebar.selectbox(
+    "আরবি ফন্ট নির্বাচন করুন",
+    ["Traditional Arabic", "Amiri", "Scheherazade"]
+)
 
 # ---------------------------------------------------------
 # API Key Configuration
@@ -107,46 +125,104 @@ SYSTEM_PROMPT = """
 আপনাকে দেয়া হ্যান্ডরিটেন শিট বা পেজের ছবি থেকে তথ্যগুলো নিখুঁতভাবে টেক্সটে রূপান্তর করুন।
 
 প্রধান নির্দেশাবলী:
-১. **কাটাকাটি বা বাতিলকৃত লেখা (Crossed-out text):**
+১. **হেডিং ও আন্ডারলাইন (Headings & Underline):**
+   - শিটে যদি কোনো শিরোনাম, প্রশ্নের নম্বর বা প্রধান হেডিং থাকে, সেটির শুরুতে `# ` ব্যবহার করুন (যেমন: `# প্রশ্ন ১: উত্তর লিখ`).
+   - শিটে কোনো শব্দ বা লাইনের নিচে দাগ/আন্ডারলাইন টানা থাকলে সেটিকে `<u>লেখা</u>` ট্যাগ দিয়ে চিহ্নিত করুন।
+
+২. **কাটাকাটি বা বাতিলকৃত লেখা (Crossed-out text):**
    - শিটে যদি কোনো শব্দ, সংখ্যা বা লাইন দাগ দিয়ে কেটে দেওয়া থাকে, সেটি আউটপুটে পুরোপুরি বাদ দিন। 
    - কেটে দেওয়ার পর আশেপাশে (উপরে/নিচে/পাশে) যে নতুন সংশোধনটি লেখা হয়েছে, শুধুমাত্র সেটিই আউটপুটে গ্রহণ করুন।
 
-২. **ছক ও টেবিল (Tables & Grids):**
+৩. **ছক ও টেবিল (Tables & Grids):**
    - কোনো ছক বা ঘর থাকলে সেটি Markdown Table (যেমন: | কলাম ১ | কলাম ২ |) হিসেবে কলাম ও সারি ঠিক রেখে রূপান্তর করুন। 
    - ঘরের ভেতর বাংলা, ইংরেজি, অংক বা আরবি যাই থাকুক না কেন, নির্দিষ্ট ঘরের ভেতরেই রাখুন।
 
-৩. **ছবি বা ইলাস্ট্রেশনের নির্দেশ (Image Instructions):**
+৪. **ছবি বা ইলাস্ট্রেশনের নির্দেশ (Image Instructions):**
    - শিটে যদি লেখা থাকে "এখানে একটি বাঘের ছবি হবে", "পাখির ছবি আঁকুন" ইত্যাদি, তবে সেটিকে **[ইমেজ নোট: এখানে একটি বাঘের ছবি হবে]** এভাবে ব্র্যাকেটে বোল্ড আকারে তুলে ধরুন।
 
-৪. **বাংলা কার-চিহ্ন ও প্রতীক:**
+৫. **বাংলা কার-চিহ্ন ও প্রতীক:**
    - বাংলা আকার, একার, ওকার, ঋ-কার ইত্যাদি কার-চিহ্ন আলাদা লেখা থাকলে কোনো বাড়তি গোল দাগ বা ডটেড চিহ্ন (◌) ব্যবহার করবেন না। সরাসরি শুধু কার-চিহ্নটি (যেমন: া, ি, ো, ৃ) আউটপুটে লিখুন।
 
-৫. **সাধারণ টেক্সট ও ভাষা:**
+৬. **সাধারণ টেক্সট ও ভাষা:**
    - বাংলা, ইংরেজি, আরবি ও গাণিতিক সমীকরণগুলো যেভাবে লেখা আছে হুবহু তুলে আনুন।
 """
 
 # ---------------------------------------------------------
-# Document Generators
+# Advanced Word Document Generator
 # ---------------------------------------------------------
-def create_word_docx(text, font_name, font_size):
+def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
-    processed_text = convert_unicode_to_bijoy(text) if font_name == "SutonnyMJ" else text
     
-    for line in processed_text.split('\n'):
-        p = doc.add_paragraph()
-        run = p.add_run(line)
-        run.font.name = font_name
-        run.font.size = Pt(font_size)
-        
-        if "[ইমেজ নোট:" in line:
-            run.font.bold = True
-            run.font.color.rgb = RGBColor(180, 50, 50)
+    lines = text.split('\n')
+    for line in lines:
+        if not line.strip():
+            continue
             
+        p = doc.add_paragraph()
+        
+        # হেডিং চেকিং
+        is_heading = False
+        current_line = line
+        if current_line.startswith('#'):
+            is_heading = True
+            current_line = re.sub(r'^#+\s*', '', current_line)
+            
+        # স্বরচিহ্ন ও বিজয়ী কাস্টমাইজেশন
+        if bangla_font == "SutonnyMJ":
+            current_line = convert_unicode_to_bijoy(current_line)
+            
+        # আন্ডারলাইন প্রসেসিং (<u>tags</u>)
+        parts = re.split(r'(<u>.*?</u>|\[ইমেজ নোট:.*?\])', current_line)
+        
+        for part in parts:
+            if not part:
+                continue
+                
+            run = p.add_run()
+            
+            # ইমেজ নোট হ্যান্ডলিং
+            if part.startswith("[ইমেজ নোট:"):
+                run.text = part
+                run.font.bold = True
+                run.font.color.rgb = RGBColor(180, 50, 50)
+                run.font.name = bangla_font
+                run.font.size = Pt(font_size)
+            # আন্ডারলাইন হ্যান্ডলিং
+            elif part.startswith("<u>") and part.endswith("</u>"):
+                clean_text = part[3:-4]
+                run.text = clean_text
+                run.font.underline = True
+                if is_heading:
+                    run.font.bold = True
+                    run.font.size = Pt(font_size + 4)
+                else:
+                    run.font.size = Pt(font_size)
+                run.font.name = arabic_font if is_arabic(clean_text) else (english_font if clean_text.isascii() else bangla_font)
+            # সাধারণ টেক্সট ও হেডিং
+            else:
+                run.text = part
+                if is_heading:
+                    run.font.bold = True
+                    run.font.size = Pt(font_size + 4)
+                else:
+                    run.font.size = Pt(font_size)
+                    
+                # ভাষা অনুযায়ী ফন্ট সেট
+                if is_arabic(part):
+                    run.font.name = arabic_font
+                elif part.isascii():
+                    run.font.name = english_font
+                else:
+                    run.font.name = bangla_font
+                    
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
+# ---------------------------------------------------------
+# PDF Document Generator
+# ---------------------------------------------------------
 def create_pdf(text, font_size):
     buffer = io.BytesIO()
     pdf = SimpleDocTemplate(buffer, pagesize=letter)
@@ -189,7 +265,6 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     with st.spinner(f"Gemini AI মোট {len(images_to_process)} টি পেজ প্রসেস করছে..."):
         for index, img in enumerate(images_to_process):
             response = model.generate_content([SYSTEM_PROMPT, img])
-            # স্বরচিহ্নের গোল দাগ রিমুভ করার জন্য clean_bengali_symbols কল করা হয়েছে
             cleaned_page_text = clean_bengali_symbols(response.text)
             
             combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n"
@@ -202,7 +277,7 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 
     col1, col2 = st.columns(2)
     
-    word_file = create_word_docx(combined_result, font_name, font_size)
+    word_file = create_word_docx(combined_result, bangla_font_name, english_font_name, arabic_font_name, font_size)
     pdf_file = create_pdf(combined_result, font_size)
 
     with col1:
