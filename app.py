@@ -265,15 +265,25 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 
     with st.spinner(f"Gemini AI মোট {len(images_to_process)} টি পেজ প্রসেস করছে..."):
         for index, img in enumerate(images_to_process):
-            # API Rate Limit (ResourceExhausted) এড়াতে ২ সেকেন্ড বিরতি
+            # API Rate Limit এড়াতে প্রতি পেজে ৪ সেকেন্ড বিরতি
             if index > 0:
-                time.sleep(2)
+                time.sleep(4)
                 
-            response = model.generate_content([SYSTEM_PROMPT, img])
-            cleaned_page_text = clean_bengali_symbols(response.text)
-            
-            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n"
-            combined_result += cleaned_page_text
+            # অটোমেটিক রিট্রাই লুপ (যদি ResourceExhausted আসে)
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = model.generate_content([SYSTEM_PROMPT, img])
+                    cleaned_page_text = clean_bengali_symbols(response.text)
+                    combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n"
+                    combined_result += cleaned_page_text
+                    break  # সফল হলে লুপ থেকে বের হবে
+                except Exception as e:
+                    if "429" in str(e) or "ResourceExhausted" in str(e):
+                        if attempt < max_retries - 1:
+                            time.sleep(10)  # লিমিট শেষ হলে ১০ সেকেন্ড ওয়েট করে আবার চেষ্টা করবে
+                            continue
+                    raise e
 
     st.success("✅ সফলভাবে সব ফাইল কনভার্ট সম্পন্ন হয়েছে!")
 
