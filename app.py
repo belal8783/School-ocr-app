@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import time
 import streamlit as st
 import google.generativeai as genai
 from docx import Document
@@ -36,7 +37,7 @@ def convert_unicode_to_bijoy(text):
         'ট': 'U', 'ঠ': 'V', 'ড': 'W', 'ঢ': 'X', 'ণ': 'Y',
         'ত': 'Z', 'থ': '_', 'দ': 'b', 'ধ': 'c', 'ন': 'd',
         'প': 'e', 'ফ': 'f', 'ব': 'g', 'ভ': 'h', 'ম': 'm',
-        'য': 'n', 'র': 'r', 'ল': 'l', 'শ': 'k', 'ষ': 'l', 'স': 'm', 'হ': 'n', 'ড়': 'o', 'ঢ়': 'p', 'য়': 'q',
+        'য': 'n', 'র': 'r', 'ল': 'l', 'শ': 'k', 'ষ': 'l', 'স': 'm', 'হ': 'n', 'ড়': 'o', 'ঢ়': 'p', 'য়': 'q',
         'া': 'v', 'ি': 'w', 'ী': 'x', 'ু': 'y', 'ূ': 'z', 'ৃ': 'A', 'ে': 'B', 'ৈ': 'C', 'ো': 'Dv', 'ৌ': 'Dv',
         '্': '', 'ং': 's', 'ঃ': 't', 'ঁ': 'u'
     }
@@ -62,7 +63,7 @@ st.set_page_config(
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
 st.caption("Developed by: Belal Hossain | আপনার স্কুলের হাতের লেখা শিট ও পিডিএফ কনভার্ট করুন")
-st.write("বাংলা, ইংরেজি, আরবি, গণিত, হেডিং-আন্ডারলাইন, কাটাকাটি সংশোধন ও ছক সম্বলিত ছবি/পিডিএফ ফাইল সহজে ওয়ার্ড ও পিডিএফে কনভার্ট করুন।")
+st.write("বাংলা, ইংরেজি, আরবি, গণিত, হেডিং-আন্ডারলাইন, কাটাকাটি সংশোধন ও ছক সম্বলিত ছবি/পিডিএফ ফাইল সহজে ওয়ার্ড ও পিডিএফে কনভার্ট করুন।")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -122,16 +123,16 @@ custom_filename = st.text_input("ডাউনলোড ফাইলের না
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
 আপনি একজন বিশেষজ্ঞ OCR ও ডকুমেন্ট কনভার্সন সিস্টেম। 
-আপনাকে দেয়া হ্যান্ডরিটেন শিট বা পেজের ছবি থেকে তথ্যগুলো নিখুঁতভাবে টেক্সটে রূপান্তর করুন।
+আপনাকে দেয়া হ্যান্ডরিটেন শিট বা পেজের ছবি থেকে তথ্যগুলো নিখুঁতভাবে টেক্সটে রূপান্তর করুন।
 
 প্রধান নির্দেশাবলী:
 ১. **হেডিং ও আন্ডারলাইন (Headings & Underline):**
    - শিটে যদি কোনো শিরোনাম, প্রশ্নের নম্বর বা প্রধান হেডিং থাকে, সেটির শুরুতে `# ` ব্যবহার করুন (যেমন: `# প্রশ্ন ১: উত্তর লিখ`).
-   - শিটে কোনো শব্দ বা লাইনের নিচে দাগ/আন্ডারলাইন টানা থাকলে সেটিকে `<u>লেখা</u>` ট্যাগ দিয়ে চিহ্নিত করুন।
+   - শিটে কোনো শব্দ বা লাইনের নিচে দাগ/আন্ডারলাইন টানা থাকলে সেটিকে `<u>লেখা</u>` ট্যাগ দিয়ে চিহ্নিত করুন।
 
 ২. **কাটাকাটি বা বাতিলকৃত লেখা (Crossed-out text):**
-   - শিটে যদি কোনো শব্দ, সংখ্যা বা লাইন দাগ দিয়ে কেটে দেওয়া থাকে, সেটি আউটপুটে পুরোপুরি বাদ দিন। 
-   - কেটে দেওয়ার পর আশেপাশে (উপরে/নিচে/পাশে) যে নতুন সংশোধনটি লেখা হয়েছে, শুধুমাত্র সেটিই আউটপুটে গ্রহণ করুন।
+   - শিটে যদি কোনো শব্দ, সংখ্যা বা লাইন দাগ দিয়ে কেটে দেওয়া থাকে, সেটি আউটপুটে পুরোপুরি বাদ দিন। 
+   - কেটে দেওয়ার পর আশেপাশে (উপরে/নিচে/পাশে) যে নতুন সংশোধনটি লেখা হয়েছে, শুধুমাত্র সেটিই আউটপুটে গ্রহণ করুন।
 
 ৩. **ছক ও টেবিল (Tables & Grids):**
    - কোনো ছক বা ঘর থাকলে সেটি Markdown Table (যেমন: | কলাম ১ | কলাম ২ |) হিসেবে কলাম ও সারি ঠিক রেখে রূপান্তর করুন। 
@@ -141,7 +142,7 @@ SYSTEM_PROMPT = """
    - শিটে যদি লেখা থাকে "এখানে একটি বাঘের ছবি হবে", "পাখির ছবি আঁকুন" ইত্যাদি, তবে সেটিকে **[ইমেজ নোট: এখানে একটি বাঘের ছবি হবে]** এভাবে ব্র্যাকেটে বোল্ড আকারে তুলে ধরুন।
 
 ৫. **বাংলা কার-চিহ্ন ও প্রতীক:**
-   - বাংলা আকার, একার, ওকার, ঋ-কার ইত্যাদি কার-চিহ্ন আলাদা লেখা থাকলে কোনো বাড়তি গোল দাগ বা ডটেড চিহ্ন (◌) ব্যবহার করবেন না। সরাসরি শুধু কার-চিহ্নটি (যেমন: া, ি, ো, ৃ) আউটপুটে লিখুন।
+   - বাংলা আকার, একার, ওকার, ঋ-কার ইত্যাদি কার-চিহ্ন আলাদা লেখা থাকলে কোনো বাড়তি গোল দাগ বা ডটেড চিহ্ন (◌) ব্যবহার করবেন না। সরাসরি শুধু কার-চিহ্নটি (যেমন: া, ি, ো, ৃ) আউটপুটে লিখুন।
 
 ৬. **সাধারণ টেক্সট ও ভাষা:**
    - বাংলা, ইংরেজি, আরবি ও গাণিতিক সমীকরণগুলো যেভাবে লেখা আছে হুবহু তুলে আনুন।
@@ -167,7 +168,7 @@ def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
             is_heading = True
             current_line = re.sub(r'^#+\s*', '', current_line)
             
-        # স্বরচিহ্ন ও বিজয়ী কাস্টমাইজেশন
+        # স্বরচিহ্ন ও বিজয়ী কাস্টমাইজেশন
         if bangla_font == "SutonnyMJ":
             current_line = convert_unicode_to_bijoy(current_line)
             
@@ -207,7 +208,7 @@ def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
                 else:
                     run.font.size = Pt(font_size)
                     
-                # ভাষা অনুযায়ী ফন্ট সেট
+                # ভাষা অনুযায়ী ফন্ট সেট
                 if is_arabic(part):
                     run.font.name = arabic_font
                 elif part.isascii():
@@ -255,7 +256,7 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 
     with st.spinner("ফাইল প্রস্তুত করা হচ্ছে..."):
         for uploaded_file in uploaded_files:
-            if uploaded_file.name.endswith(".pdf"):
+            if uploaded_file.name.lower().endswith(".pdf"):
                 pdf_bytes = uploaded_file.read()
                 converted_images = convert_from_bytes(pdf_bytes)
                 images_to_process.extend(converted_images)
@@ -264,15 +265,19 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 
     with st.spinner(f"Gemini AI মোট {len(images_to_process)} টি পেজ প্রসেস করছে..."):
         for index, img in enumerate(images_to_process):
+            # API Rate Limit (ResourceExhausted) এড়াতে ২ সেকেন্ড বিরতি
+            if index > 0:
+                time.sleep(2)
+                
             response = model.generate_content([SYSTEM_PROMPT, img])
             cleaned_page_text = clean_bengali_symbols(response.text)
             
             combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n"
             combined_result += cleaned_page_text
 
-    st.success("✅ সফলভাবে সব ফাইল কনভার্ট সম্পন্ন হয়েছে!")
+    st.success("✅ সফলভাবে সব ফাইল কনভার্ট সম্পন্ন হয়েছে!")
 
-    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
+    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
     st.text_area("আউটপুট টেক্সট:", combined_result, height=300)
 
     col1, col2 = st.columns(2)
