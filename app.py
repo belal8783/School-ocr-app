@@ -73,11 +73,9 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Model Selection
+# Model Selection (gemini-3.6-flash সরাসরি সেট করা হয়েছে)
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-3.6-flash'  # আপনার পছন্দমতো মডেল নাম বসিয়ে নিন
-
-model = genai.GenerativeModel("gemini-3.6-flash")
+model = genai.GenerativeModel('gemini-3.6-flash')
 
 # ---------------------------------------------------------
 # Safety Settings (যাতে প্রসেসিং সেন্সর না হয়)
@@ -217,12 +215,11 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 
     for index, img in enumerate(images_to_process):
         
-        # ৪২৯ কোটা এরর এড়ানোর জন্য স্মার্ট রিট্রি লুপ
         max_retries = 5
         success = False
         
         for attempt in range(max_retries):
-            status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
+            status_text.text(f"প্রসেসিং চলছে (gemini-3.6-flash): পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
             try:
                 response = model.generate_content(
                     [SYSTEM_PROMPT, img],
@@ -239,16 +236,14 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                     combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[সতর্কতা: পৃষ্ঠা {index + 1} থেকে কোনো টেক্সট পাওয়া যায়নি।]"
                 
                 success = True
-                break # সফল হলে লুপ থেকে বের হবে
+                break
                 
             except Exception as e:
                 err_msg = str(e)
-                # যদি ৪২৯ কোটা লিমিট ওভার হয়
                 if "429" in err_msg or "Quota" in err_msg or "ResourceExhausted" in err_msg:
                     status_text.warning(f"⚠️ এপিআই কোটা লিমিট পৌঁছেছে। ১৫ সেকেন্ড অপেক্ষা করে অটো-রিট্রি করা হচ্ছে (পৃষ্ঠা {index + 1})...")
-                    time.sleep(15) # ১৫ সেকেন্ড অটোমেটিক পজ নেবে
+                    time.sleep(15)
                 else:
-                    # অন্য কোনো এরর হলে
                     time.sleep(3)
         
         if not success:
