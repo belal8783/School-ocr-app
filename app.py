@@ -19,12 +19,8 @@ def clean_bengali_symbols(text):
     if not text:
         return ""
     cleaned_text = re.sub(r'\u25cc', '', text)
-    cleaned_text = cleaned_text.replace('◌', '')
-    return cleaned_text
+    return cleaned_text.replace('◌', '')
 
-# ---------------------------------------------------------
-# Helper to detect Arabic scripts
-# ---------------------------------------------------------
 def is_arabic(text):
     return bool(re.search(r'[\u0600-\u06FF]', text))
 
@@ -38,7 +34,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | আপনার স্কুলের হাতের লেখা শিট ও পিডিএফ কনভার্ট করুন")
+st.caption("Developed by: Belal Hossain | নিখুঁত প্রফেশনাল কনভার্সন সিস্টেম")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -75,10 +71,27 @@ if not api_key:
     st.stop()
 
 genai.configure(api_key=api_key)
-model = genai.GenerativeModel('gemini-3.6-flash')
 
 # ---------------------------------------------------------
-# File Upload & Session State setup
+# Set Your Desired Model Here
+# আপনার পছন্দের Pro মডেলটির নাম এখানে বসিয়ে দিন
+# ---------------------------------------------------------
+MODEL_NAME = 'gemini-1.5-pro'  # অথবা আপনার কাঙ্ক্ষিত মডেল যেমন: gemini-2.0-flash / custom
+
+model = genai.GenerativeModel("gemini-3.6-flash")
+
+# ---------------------------------------------------------
+# Safety Settings (যাতে প্রসেসিং সফল কিন্তু ফাঁকা না আসে)
+# ---------------------------------------------------------
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+]
+
+# ---------------------------------------------------------
+# File Upload & Session State Setup (ফাঁকা ডাউনলোড রোধে)
 # ---------------------------------------------------------
 uploaded_files = st.file_uploader(
     "আপনার শিটের ছবি (JPG, PNG) অথবা PDF ফাইল আপলোড করুন",
@@ -88,52 +101,36 @@ uploaded_files = st.file_uploader(
 
 custom_filename = st.text_input("ডাউনলোড ফাইলের নাম লিখুন:", value="Converted_School_Sheet")
 
-# সেশন স্টেট (ফাঁকা ডাউনলোড রোধ করার জন্য)
 if 'final_converted_text' not in st.session_state:
     st.session_state.final_converted_text = ""
-    st.session_state.conversion_successful = False
+if 'conversion_done' not in st.session_state:
+    st.session_state.conversion_done = False
 
 # ---------------------------------------------------------
 # Master AI Prompt
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
 আপনি একজন বিশেষজ্ঞ OCR ও ডকুমেন্ট কনভার্সন সিস্টেম। 
-হ্যান্ডরিটেন শিট থেকে তথ্যগুলো নিখুঁতভাবে বাংলা ইউনিকোড টেক্সটে রূপান্তর করুন।
-
-নির্দেশাবলী:
-১. হেডিং থাকলে শুরুতে `# ` ব্যবহার করুন।
-২. আন্ডারলাইন থাকলে `<u>লেখা</u>` ট্যাগ ব্যবহার করুন।
-৩. কাটাকাটি বা বাতিলকৃত লেখা বাদ দিয়ে সঠিক সংশোধিত রূপটি লিখুন।
-৪. ছক বা টেবিল থাকলে তা Markdown Table ফরম্যাটে রাখুন।
-৫. কোনো অবোধ্য বা অস্পষ্ট বাংলা যুক্তবর্ণ থাকলে তা ভাঙবেন না, প্রমিত ইউনিকোড বাংলায় লিখুন।
+ছবিতে থাকা হ্যান্ডরিটেন বা টাইপ করা টেক্সটগুলো হুবহু ইউনিকোড বাংলায় নিখুঁতভাবে রূপান্তর করুন।
+- হেডিং থাকলে শুরুতে `# ` দিন।
+- আন্ডারলাইন থাকলে `<u>লেখা</u>` দিন।
+- ছক বা টেবিল থাকলে তা Markdown Table ফরম্যাটে রাখুন।
+- ভুল বা অবোধ্য শব্দ থাকলে বানান ঠিক করে প্রমিত ইউনিকোড বাংলায় লিখুন।
 """
-
-# Safety Settings: AI যেন কোনো লেখা সেন্সর বা ব্লক না করে
-safety_settings = [
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-]
 
 # ---------------------------------------------------------
 # Word Document Generator
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
-    
     lines = text.split('\n')
     for line in lines:
         if not line.strip():
             continue
             
         p = doc.add_paragraph()
-        
-        is_heading = False
-        current_line = line
-        if current_line.startswith('#'):
-            is_heading = True
-            current_line = re.sub(r'^#+\s*', '', current_line)
+        is_heading = line.startswith('#')
+        current_line = re.sub(r'^#+\s*', '', line) if is_heading else line
             
         parts = re.split(r'(<u>.*?</u>|\[ইমেজ নোট:.*?\])', current_line)
         
@@ -200,13 +197,13 @@ def create_pdf(text, font_size):
     return buffer
 
 # ---------------------------------------------------------
-# Main Execution Logic
+# Execution Logic
 # ---------------------------------------------------------
 if uploaded_files and st.button("🚀 কনভার্ট শুরু করুন"):
     combined_result = ""
     images_to_process = []
 
-    with st.spinner("ফাইল লোড করা হচ্ছে..."):
+    with st.spinner("ফাইল মেমোরিতে লোড করা হচ্ছে..."):
         for uploaded_file in uploaded_files:
             if uploaded_file.name.lower().endswith(".pdf"):
                 pdf_bytes = uploaded_file.read()
@@ -220,55 +217,48 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     status_text = st.empty()
 
     for index, img in enumerate(images_to_process):
-        status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages}")
+        status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages}")
         
-        if index > 0:
-            time.sleep(3) # API Limit রক্ষা করতে বিরতি
+        try:
+            # API Call with Safety Setting Bypass
+            response = model.generate_content(
+                [SYSTEM_PROMPT, img],
+                safety_settings=safety_settings
+            )
             
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = model.generate_content(
-                    [SYSTEM_PROMPT, img],
-                    safety_settings=safety_settings
-                )
+            page_text = ""
+            if response and hasattr(response, 'text'):
+                page_text = clean_bengali_symbols(response.text)
+            
+            if page_text.strip():
+                combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n" + page_text
+            else:
+                # যদি কোনো কারণে রেসপন্স ফাঁকা আসে
+                combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[সতর্কতা: এই পৃষ্ঠা থেকে AI কোনো টেক্সট ব্যাক করতে পারেনি।]"
                 
-                # Check if API blocked it despite settings
-                try:
-                    page_text = response.text
-                except ValueError:
-                    page_text = f"[সতর্কতা: পৃষ্ঠা {index + 1} গুগল সেফটি ফিল্টারের কারণে স্কিপ করা হয়েছে।]"
-
-                cleaned_page_text = clean_bengali_symbols(page_text)
-                combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n"
-                combined_result += cleaned_page_text
-                break
-            except Exception as e:
-                if "429" in str(e) or "ResourceExhausted" in str(e):
-                    time.sleep(10)
-                    continue
-                st.error(f"পৃষ্ঠা {index + 1} এ এরর: {e}")
-                break
-                
+        except Exception as e:
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: {str(e)}]"
+            
         progress_bar.progress((index + 1) / total_pages)
 
     status_text.empty()
     
-    # ডেটা সেশন স্টেটে সেভ করা
+    # মেমোরিতে সেভ রাখা (যাতে ডাউনলোড ক্লিক করলে মুছে না যায়)
     st.session_state.final_converted_text = combined_result
-    st.session_state.conversion_successful = True
-    
+    st.session_state.conversion_done = True
+
 # ---------------------------------------------------------
-# Display Results & Download (বাইরে রাখা হয়েছে যাতে রিফ্রেশ হলেও ডেটা না হারায়)
+# Display Output & Downloads
 # ---------------------------------------------------------
-if st.session_state.conversion_successful:
-    st.success("✅ সফলভাবে রূপান্তর সম্পন্ন হয়েছে!")
+if st.session_state.conversion_done:
+    st.success("✅ কনভার্ট সম্পন্ন হয়েছে!")
 
     st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
-    st.text_area("আউটপুট টেক্সট (ইউনিকোড):", st.session_state.final_converted_text, height=300)
+    st.text_area("আউটপুট টেক্সট (ইউনিকোড):", st.session_state.final_converted_text, height=350)
 
     col1, col2 = st.columns(2)
     
+    # রিয়েলটাইম ফাইল জেনারেশন (Session State টেক্সট দিয়ে)
     word_file = create_word_docx(st.session_state.final_converted_text, bangla_font_name, english_font_name, arabic_font_name, font_size)
     pdf_file = create_pdf(st.session_state.final_converted_text, font_size)
 
