@@ -34,7 +34,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | নিখুঁত প্রফেশনাল কনভার্সন সিস্টেম")
+st.caption("Developed by: Belal Hossain | কোটা হ্যান্ডলিং ও স্মার্ট কনভার্সন")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -73,15 +73,14 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Set Your Desired Model Here
-# আপনার পছন্দের Pro মডেলটির নাম এখানে বসিয়ে দিন
+# Model Selection
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-1.5-pro'  # অথবা আপনার কাঙ্ক্ষিত মডেল যেমন: gemini-2.0-flash / custom
+MODEL_NAME = 'gemini-1.5-flash'  # আপনার পছন্দমতো মডেল নাম বসিয়ে নিন
 
-model = genai.GenerativeModel("gemini-3.6-flash")
+model = genai.GenerativeModel(MODEL_NAME)
 
 # ---------------------------------------------------------
-# Safety Settings (যাতে প্রসেসিং সফল কিন্তু ফাঁকা না আসে)
+# Safety Settings (যাতে প্রসেসিং সেন্সর না হয়)
 # ---------------------------------------------------------
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -91,7 +90,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------
-# File Upload & Session State Setup (ফাঁকা ডাউনলোড রোধে)
+# File Upload & Session State Setup
 # ---------------------------------------------------------
 uploaded_files = st.file_uploader(
     "আপনার শিটের ছবি (JPG, PNG) অথবা PDF ফাইল আপলোড করুন",
@@ -115,7 +114,7 @@ SYSTEM_PROMPT = """
 - হেডিং থাকলে শুরুতে `# ` দিন।
 - আন্ডারলাইন থাকলে `<u>লেখা</u>` দিন।
 - ছক বা টেবিল থাকলে তা Markdown Table ফরম্যাটে রাখুন।
-- ভুল বা অবোধ্য শব্দ থাকলে বানান ঠিক করে প্রমিত ইউনিকোড বাংলায় লিখুন।
+- ভুল বা অবোধ্য শব্দ থাকলে প্রমিত ইউনিকোড বাংলায় লিখুন।
 """
 
 # ---------------------------------------------------------
@@ -197,7 +196,7 @@ def create_pdf(text, font_size):
     return buffer
 
 # ---------------------------------------------------------
-# Execution Logic
+# Execution Logic with Automatic Rate Limit Retry
 # ---------------------------------------------------------
 if uploaded_files and st.button("🚀 কনভার্ট শুরু করুন"):
     combined_result = ""
@@ -217,33 +216,48 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     status_text = st.empty()
 
     for index, img in enumerate(images_to_process):
-        status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages}")
         
-        try:
-            # API Call with Safety Setting Bypass
-            response = model.generate_content(
-                [SYSTEM_PROMPT, img],
-                safety_settings=safety_settings
-            )
-            
-            page_text = ""
-            if response and hasattr(response, 'text'):
-                page_text = clean_bengali_symbols(response.text)
-            
-            if page_text.strip():
-                combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n" + page_text
-            else:
-                # যদি কোনো কারণে রেসপন্স ফাঁকা আসে
-                combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[সতর্কতা: এই পৃষ্ঠা থেকে AI কোনো টেক্সট ব্যাক করতে পারেনি।]"
+        # ৪২৯ কোটা এরর এড়ানোর জন্য স্মার্ট রিট্রি লুপ
+        max_retries = 5
+        success = False
+        
+        for attempt in range(max_retries):
+            status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
+            try:
+                response = model.generate_content(
+                    [SYSTEM_PROMPT, img],
+                    safety_settings=safety_settings
+                )
                 
-        except Exception as e:
-            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: {str(e)}]"
+                page_text = ""
+                if response and hasattr(response, 'text'):
+                    page_text = clean_bengali_symbols(response.text)
+                
+                if page_text.strip():
+                    combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n" + page_text
+                else:
+                    combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[সতর্কতা: পৃষ্ঠা {index + 1} থেকে কোনো টেক্সট পাওয়া যায়নি।]"
+                
+                success = True
+                break # সফল হলে লুপ থেকে বের হবে
+                
+            except Exception as e:
+                err_msg = str(e)
+                # যদি ৪২৯ কোটা লিমিট ওভার হয়
+                if "429" in err_msg or "Quota" in err_msg or "ResourceExhausted" in err_msg:
+                    status_text.warning(f"⚠️ এপিআই কোটা লিমিট পৌঁছেছে। ১৫ সেকেন্ড অপেক্ষা করে অটো-রিট্রি করা হচ্ছে (পৃষ্ঠা {index + 1})...")
+                    time.sleep(15) # ১৫ সেকেন্ড অটোমেটিক পজ নেবে
+                else:
+                    # অন্য কোনো এরর হলে
+                    time.sleep(3)
+        
+        if not success:
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: বারবার চেষ্টা করেও এপিআই কোটা লিমিটের জন্য প্রসেস করা যায়নি।]"
             
         progress_bar.progress((index + 1) / total_pages)
 
     status_text.empty()
     
-    # মেমোরিতে সেভ রাখা (যাতে ডাউনলোড ক্লিক করলে মুছে না যায়)
     st.session_state.final_converted_text = combined_result
     st.session_state.conversion_done = True
 
@@ -258,7 +272,6 @@ if st.session_state.conversion_done:
 
     col1, col2 = st.columns(2)
     
-    # রিয়েলটাইম ফাইল জেনারেশন (Session State টেক্সট দিয়ে)
     word_file = create_word_docx(st.session_state.final_converted_text, bangla_font_name, english_font_name, arabic_font_name, font_size)
     pdf_file = create_pdf(st.session_state.final_converted_text, font_size)
 
