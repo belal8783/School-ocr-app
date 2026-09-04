@@ -78,7 +78,7 @@ genai.configure(api_key=api_key)
 model = genai.GenerativeModel('gemini-3.6-flash')
 
 # ---------------------------------------------------------
-# File Upload
+# File Upload & Session State setup
 # ---------------------------------------------------------
 uploaded_files = st.file_uploader(
     "আপনার শিটের ছবি (JPG, PNG) অথবা PDF ফাইল আপলোড করুন",
@@ -87,6 +87,11 @@ uploaded_files = st.file_uploader(
 )
 
 custom_filename = st.text_input("ডাউনলোড ফাইলের নাম লিখুন:", value="Converted_School_Sheet")
+
+# সেশন স্টেট (ফাঁকা ডাউনলোড রোধ করার জন্য)
+if 'final_converted_text' not in st.session_state:
+    st.session_state.final_converted_text = ""
+    st.session_state.conversion_successful = False
 
 # ---------------------------------------------------------
 # Master AI Prompt
@@ -103,8 +108,16 @@ SYSTEM_PROMPT = """
 ৫. কোনো অবোধ্য বা অস্পষ্ট বাংলা যুক্তবর্ণ থাকলে তা ভাঙবেন না, প্রমিত ইউনিকোড বাংলায় লিখুন।
 """
 
+# Safety Settings: AI যেন কোনো লেখা সেন্সর বা ব্লক না করে
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+]
+
 # ---------------------------------------------------------
-# Word Document Generator (Robust Unicode Engine)
+# Word Document Generator
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
@@ -210,13 +223,23 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
         status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages}")
         
         if index > 0:
-            time.sleep(3)
+            time.sleep(3) # API Limit রক্ষা করতে বিরতি
             
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = model.generate_content([SYSTEM_PROMPT, img])
-                cleaned_page_text = clean_bengali_symbols(response.text)
+                response = model.generate_content(
+                    [SYSTEM_PROMPT, img],
+                    safety_settings=safety_settings
+                )
+                
+                # Check if API blocked it despite settings
+                try:
+                    page_text = response.text
+                except ValueError:
+                    page_text = f"[সতর্কতা: পৃষ্ঠা {index + 1} গুগল সেফটি ফিল্টারের কারণে স্কিপ করা হয়েছে।]"
+
+                cleaned_page_text = clean_bengali_symbols(page_text)
                 combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n"
                 combined_result += cleaned_page_text
                 break
@@ -230,15 +253,24 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
         progress_bar.progress((index + 1) / total_pages)
 
     status_text.empty()
+    
+    # ডেটা সেশন স্টেটে সেভ করা
+    st.session_state.final_converted_text = combined_result
+    st.session_state.conversion_successful = True
+    
+# ---------------------------------------------------------
+# Display Results & Download (বাইরে রাখা হয়েছে যাতে রিফ্রেশ হলেও ডেটা না হারায়)
+# ---------------------------------------------------------
+if st.session_state.conversion_successful:
     st.success("✅ সফলভাবে রূপান্তর সম্পন্ন হয়েছে!")
 
     st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
-    st.text_area("আউটপুট টেক্সট (ইউনিকোড):", combined_result, height=300)
+    st.text_area("আউটপুট টেক্সট (ইউনিকোড):", st.session_state.final_converted_text, height=300)
 
     col1, col2 = st.columns(2)
     
-    word_file = create_word_docx(combined_result, bangla_font_name, english_font_name, arabic_font_name, font_size)
-    pdf_file = create_pdf(combined_result, font_size)
+    word_file = create_word_docx(st.session_state.final_converted_text, bangla_font_name, english_font_name, arabic_font_name, font_size)
+    pdf_file = create_pdf(st.session_state.final_converted_text, font_size)
 
     with col1:
         st.download_button(
