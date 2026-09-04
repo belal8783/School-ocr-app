@@ -75,9 +75,9 @@ genai.configure(api_key=api_key)
 # ---------------------------------------------------------
 # Model Selection
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-1.5-flash'  # আপনার পছন্দমতো মডেল নাম বসিয়ে নিন
+MODEL_NAME = 'gemini-3.6-flash'  # আপনার পছন্দমতো মডেল নাম বসিয়ে নিন
 
-model = genai.GenerativeModel(MODEL_NAME)
+model = genai.GenerativeModel("gemini-3.6-flash")
 
 # ---------------------------------------------------------
 # Safety Settings (যাতে প্রসেসিং সেন্সর না হয়)
