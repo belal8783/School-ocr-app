@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | Fixed & Production Ready")
+st.caption("Developed by: Belal Hossain | Updated to Gemini 3.6 Flash")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -75,9 +75,9 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Model Selection (Fixed)
+# Model Selection (Updated to Gemini 3.6 Flash as per API instruction)
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-2.5-flash'
+MODEL_NAME = 'gemini-3.6-flash'
 model = genai.GenerativeModel(MODEL_NAME)
 
 # ---------------------------------------------------------
