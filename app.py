@@ -15,7 +15,7 @@ from PIL import Image, ImageOps
 from pdf2image import convert_from_bytes
 
 # ---------------------------------------------------------
-# Unicode Bengali Cleaning Routine
+# Helper Functions
 # ---------------------------------------------------------
 def clean_bengali_symbols(text):
     if not text:
@@ -27,7 +27,7 @@ def is_arabic(text):
     return bool(re.search(r'[\u0600-\u06FF]', text))
 
 # ---------------------------------------------------------
-# Page Config & Branding
+# Page Setup
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Handwritten to Word & PDF Agent",
@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | Auto-Model Detection & OCR Fix")
+st.caption("Developed by: Belal Hossain | Fixed & Stable OCR Solution")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -75,12 +75,10 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Dynamic Model Fallback System
+# Stable Model Selection
 # ---------------------------------------------------------
-# গুগলের সাপোর্ট করা অফিশিয়াল মডেলগুলির লিস্ট (অগ্রাধিকার ক্রমানুসারে)
-SUPPORTED_MODELS = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp']
-
-selected_model_name = SUPPORTED_MODELS[0]
+MODEL_NAME = 'gemini-1.5-flash'
+model = genai.GenerativeModel(MODEL_NAME)
 
 # ---------------------------------------------------------
 # Safety Settings
@@ -93,7 +91,7 @@ safety_settings = [
 ]
 
 # ---------------------------------------------------------
-# File Upload & Session State Setup
+# File Upload UI
 # ---------------------------------------------------------
 uploaded_files = st.file_uploader(
     "আপনার শিটের ছবি (JPG, PNG) অথবা PDF ফাইল আপলোড করুন",
@@ -109,37 +107,20 @@ if 'conversion_done' not in st.session_state:
     st.session_state.conversion_done = False
 
 # ---------------------------------------------------------
-# Master AI Prompt
+# System Prompt
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
-আপনি একজন বিশেষজ্ঞ বাংলা OCR এবং ট্রান্সক্রিপশন সিস্টেম।
-ছবিতে থাকা বাংলা এবং ইংরেজি হাতে লেখা ও ছাপানো টেক্সট নিখুঁতভাবে রূপান্তর করুন।
+আপনি একজন নিখুঁত OCR ট্রান্সক্রিপশন সিস্টেম।
+ছবিতে থাকা বাংলা, ইংরেজি বা আরবি যেকোনো হাতে লেখা বা টাইপ করা টেক্সট হুবহু রূপান্তর করুন।
 
-বিশেষ নির্দেশাবলী:
-১. সাধারণ টেক্সট, লাইন, নম্বর এবং প্রতিটি শব্দ নিখুঁতভাবে টাইপ করুন।
-২. ছবিতে যদি কোনো ছক বা টেবিল থাকে (যেমন: প্রদত্ত শব্দ | শব্দের অর্থ), তাহলে সেটিকে Markdown Table আকারে লিখবেন।
-৩. কাটাকাটি থাকলে কাটাকাটির ভেতরের সঠিক শব্দটি টাইপ করবেন।
-৪. অতিরিক্ত কোনো কথা বা ভূমিকা লিখবেন না।
+নির্দেশনা:
+১. পেজের সাধারণ লাইন, প্রশ্ন, উত্তর ও নম্বর যেভাবে আছে সেভাবেই বাংলায় সঠিক ইউনিকোডে লিখবেন।
+২. ছবিতে যদি কোনো ছক বা টেবিল থাকে, তবে সেটিকে Markdown Table ফরম্যাটে লিখুন। (যেমন: | শব্দ | অর্থ |)
+৩. অতিরিক্ত কোনো কথা, শুভেচ্ছা বা ব্যাখ্যা লিখবেন না। শুধু পেজের কনটেন্টটুকু আউটপুট দিন।
 """
 
 # ---------------------------------------------------------
-# Image Compressor and Optimizer
-# ---------------------------------------------------------
-def optimize_and_convert_image(pil_img):
-    pil_img = ImageOps.exif_transpose(pil_img)
-    max_size = (1280, 1280)
-    pil_img.thumbnail(max_size, Image.Resampling.LANCZOS)
-    
-    img_byte_arr = io.BytesIO()
-    pil_img.convert('RGB').save(img_byte_arr, format='JPEG', quality=85)
-    
-    return {
-        'mime_type': 'image/jpeg',
-        'data': img_byte_arr.getvalue()
-    }
-
-# ---------------------------------------------------------
-# Word Document Generator
+# Word Document Generator with Table Support
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
@@ -254,13 +235,13 @@ def create_pdf(text, font_size):
     return buffer
 
 # ---------------------------------------------------------
-# Execution Logic
+# Processing Logic
 # ---------------------------------------------------------
 if uploaded_files and st.button("🚀 কনভার্ট শুরু করুন"):
     combined_result = ""
     images_to_process = []
 
-    with st.spinner("ফাইল মেমোরিতে প্রসেস করা হচ্ছে..."):
+    with st.spinner("ফাইল লোড হচ্ছে..."):
         for uploaded_file in uploaded_files:
             if uploaded_file.name.lower().endswith(".pdf"):
                 pdf_bytes = uploaded_file.read()
@@ -277,27 +258,13 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 
     for index, img in enumerate(images_to_process):
         success = False
-        optimized_payload = optimize_and_convert_image(img)
+        img = ImageOps.exif_transpose(img)
         
-        # ট্রাই করার জন্য একাধিক অফিশিয়াল মডেল টেস্ট করা হবে
-        for model_candidate in SUPPORTED_MODELS:
-            if success:
-                break
-                
+        for attempt in range(3):
+            status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages}")
             try:
-                current_model = genai.GenerativeModel(
-                    model_name=model_candidate,
-                    generation_config={
-                        "temperature": 0.1,
-                        "top_p": 0.95,
-                        "max_output_tokens": 4096,
-                    }
-                )
-                
-                status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages} (মডেল: {model_candidate})")
-                
-                response = current_model.generate_content(
-                    [SYSTEM_PROMPT, optimized_payload],
+                response = model.generate_content(
+                    [SYSTEM_PROMPT, img],
                     safety_settings=safety_settings
                 )
                 
@@ -307,14 +274,13 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                     success = True
                     break
                 else:
-                    time.sleep(1)
-                    
+                    time.sleep(2)
+                
             except Exception as e:
-                # মডেল নাম না মিললে বা এরর দিলে পরের অফিশিয়াল মডেলে অটো সুইচ করবে
-                continue
-
+                time.sleep(3)
+        
         if not success:
-            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি। অনুগ্রহ করে API Key বা ছবির ক্লারিটি চেক করুন।]"
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি।]"
             
         progress_bar.progress((index + 1) / total_pages)
 
@@ -323,12 +289,12 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     st.session_state.conversion_done = True
 
 # ---------------------------------------------------------
-# Display Output & Downloads
+# Output Section
 # ---------------------------------------------------------
 if st.session_state.conversion_done:
-    st.success("✅ কনভার্ট সম্পন্ন হয়েছে!")
+    st.success("✅ কনভার্ট সম্পন্ন হয়েছে!")
 
-    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
+    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
     st.markdown(st.session_state.final_converted_text)
 
     col1, col2 = st.columns(2)
