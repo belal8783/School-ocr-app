@@ -11,7 +11,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from PIL import Image
+from PIL import Image, ImageOps
 from pdf2image import convert_from_bytes
 
 # ---------------------------------------------------------
@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | ফিক্সড ও পারফেক্ট টেবিল প্রসেসিং")
+st.caption("Developed by: Belal Hossain | Gemini 3.6 Flash Powered")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -75,10 +75,18 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Model Selection
+# Model Selection (FIXED: gemini-3.6-flash)
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-3.6-flash' # অত্যন্ত স্ট্যাবল ও দ্রুত কাজ করে
-model = genai.GenerativeModel('gemini-3.6-flash')
+MODEL_NAME = 'gemini-3.6-flash'
+
+model = genai.GenerativeModel(
+    model_name=MODEL_NAME,
+    generation_config={
+        "temperature": 0.1,
+        "top_p": 0.95,
+        "max_output_tokens": 4096,
+    }
+)
 
 # ---------------------------------------------------------
 # Safety Settings
@@ -110,32 +118,42 @@ if 'conversion_done' not in st.session_state:
 # Master AI Prompt
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
-আপনি একজন বিশেষজ্ঞ OCR সিস্টেম। ছবিতে থাকা টেক্সট ও টেবিল নিখুঁতভাবে রূপান্তর করুন।
+আপনি একজন বিশেষজ্ঞ বাংলা OCR এবং ট্রান্সক্রিপশন সিস্টেম।
+ছবিতে থাকা বাংলা এবং ইংরেজি হাতে লেখা ও ছাপানো টেক্সট নিখুঁতভাবে রূপান্তর করুন।
 
-গুরুত্বপূর্ণ নিয়মাবলি:
-১. ছবিতে কোনো ছক, ঘর বা টেবিল থাকলে সেটিকে অবশ্যই স্ট্যান্ডার্ড Markdown Table আকারে লিখবেন।
+বিশেষ নির্দেশাবলী:
+১. ছবিতে যদি কোনো ছক বা টেবিল থাকে (যেমন: প্রদত্ত শব্দ | শব্দের অর্থ), তাহলে সেটিকে অবশ্যই স্ট্যান্ডার্ড Markdown Table আকারে লিখবেন।
 উদাহরণ:
-| Measurements | S | M | L | XL | XXL |
-| --- | --- | --- | --- | --- | --- |
-| Length (Inches) | 26.5 | 28 | 29 | 30 | 31 |
-| Chest (Inches) | 19 | 19.75 | 20.5 | 21.5 | 22.5 |
+| প্রদত্ত শব্দ | শব্দের অর্থ |
+| --- | --- |
+| অসি | কলম |
+| ইতি | শেষ |
 
-২. অতিরিক্ত কোনো কথা বা ব্যাখ্যা দেবেন না, শুধু কনভার্ট করা অংশটুকু আউটপুট দিন।
+২. ছবিতে কোনো লাল কালির বা কাটাকাটি লেখা থাকলে, কাটাকাটির ভেতরের সঠিক শব্দটি পড়ে সুন্দরভাবে টাইপ করবেন।
+৩. অতিরিক্ত কোনো কথা বা ব্যাখ্যা দেবেন না। শুধুমাত্র ছবিতে থাকা পড়া অংশটি সঠিকভাবে সাজিয়ে আউটপুট দিন।
 """
 
 # ---------------------------------------------------------
-# Helper: Convert PIL Image to Dict Bytes for Gemini
+# Image Compressor and Optimizer
 # ---------------------------------------------------------
-def prepare_image_payload(pil_img):
+def optimize_and_convert_image(pil_img):
+    # অটো ওরিয়েন্টেশন ফিক্স
+    pil_img = ImageOps.exif_transpose(pil_img)
+    
+    # সাইজ অপটিমাইজ করা (Max 1280px)
+    max_size = (1280, 1280)
+    pil_img.thumbnail(max_size, Image.Resampling.LANCZOS)
+    
     img_byte_arr = io.BytesIO()
-    pil_img.convert('RGB').save(img_byte_arr, format='JPEG')
+    pil_img.convert('RGB').save(img_byte_arr, format='JPEG', quality=85)
+    
     return {
         'mime_type': 'image/jpeg',
         'data': img_byte_arr.getvalue()
     }
 
 # ---------------------------------------------------------
-# Word Document Generator with Real Table Grid
+# Word Document Generator with Grid Borders
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
@@ -148,15 +166,12 @@ def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
         if not t_data:
             return
         
-        # হেডার নির্দেশক লাইন (|---|---|) ফিল্টার
         valid_rows = [r for r in t_data if not all(re.match(r'^[\s:-]+$', cell) for cell in r)]
         if not valid_rows:
             return
             
         max_cols = max(len(r) for r in valid_rows)
         word_table = doc.add_table(rows=len(valid_rows), cols=max_cols)
-        
-        # আসল ঘর এবং চারপাশের বর্ডার স্টাইল নির্ধারণ
         word_table.style = 'Table Grid'
         word_table.alignment = WD_TABLE_ALIGNMENT.CENTER
         
@@ -166,7 +181,6 @@ def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
                     cell = word_table.cell(r_idx, c_idx)
                     cell.text = cell_value.strip()
                     
-                    # টেক্সট ফন্ট ও অ্যালাইনমেন্ট
                     for p in cell.paragraphs:
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         for run in p.runs:
@@ -183,7 +197,6 @@ def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     for line in lines:
         stripped = line.strip()
         
-        # মার্কডাউন টেবিল ডিটেকশন
         if stripped.startswith('|') and stripped.endswith('|'):
             in_table = True
             cells = [c.strip() for c in stripped.split('|')[1:-1]]
@@ -261,14 +274,14 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     combined_result = ""
     images_to_process = []
 
-    with st.spinner("ফাইল মেমোরিতে লোড করা হচ্ছে..."):
+    with st.spinner("ফাইল মেমোরিতে প্রসেস করা হচ্ছে..."):
         for uploaded_file in uploaded_files:
             if uploaded_file.name.lower().endswith(".pdf"):
                 pdf_bytes = uploaded_file.read()
                 converted_images = convert_from_bytes(pdf_bytes)
                 images_to_process.extend(converted_images)
             else:
-                uploaded_file.seek(0) # বাফার রিসেট
+                uploaded_file.seek(0)
                 img = Image.open(uploaded_file)
                 images_to_process.append(img)
 
@@ -278,13 +291,13 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 
     for index, img in enumerate(images_to_process):
         success = False
-        img_payload = prepare_image_payload(img)
+        optimized_payload = optimize_and_convert_image(img)
         
         for attempt in range(3):
-            status_text.text(f"প্রসেস করা হচ্ছে: পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
+            status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages} (ট্রাই: {attempt + 1})")
             try:
                 response = model.generate_content(
-                    [SYSTEM_PROMPT, img_payload],
+                    [SYSTEM_PROMPT, optimized_payload],
                     safety_settings=safety_settings
                 )
                 
@@ -300,7 +313,7 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                 time.sleep(3)
         
         if not success:
-            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি সঠিকভাবে প্রসেস করা সম্ভব হয়নি।]"
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি।]"
             
         progress_bar.progress((index + 1) / total_pages)
 
@@ -313,9 +326,9 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 # Display Output & Downloads
 # ---------------------------------------------------------
 if st.session_state.conversion_done:
-    st.success("✅ সফলভাবে কনভার্ট সম্পন্ন হয়েছে!")
+    st.success("✅ কনভার্ট সফলভাবে সম্পন্ন হয়েছে!")
 
-    st.subheader("📝 কনভার্ট হওয়া আউটপুট (লাইভ টেবিল প্রিভিউ):")
+    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ (ছকসহ):")
     st.markdown(st.session_state.final_converted_text)
 
     col1, col2 = st.columns(2)
