@@ -5,7 +5,7 @@ import time
 import streamlit as st
 import google.generativeai as genai
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from reportlab.lib.pagesizes import letter
@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | Gemini 3.6 Flash Powered")
+st.caption("Developed by: Belal Hossain | Auto-Model Detection & OCR Fix")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -75,18 +75,12 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Model Selection (FIXED: gemini-3.6-flash)
+# Dynamic Model Fallback System
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-3.6-flash'
+# গুগলের সাপোর্ট করা অফিশিয়াল মডেলগুলির লিস্ট (অগ্রাধিকার ক্রমানুসারে)
+SUPPORTED_MODELS = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp']
 
-model = genai.GenerativeModel(
-    model_name=MODEL_NAME,
-    generation_config={
-        "temperature": 0.1,
-        "top_p": 0.95,
-        "max_output_tokens": 4096,
-    }
-)
+selected_model_name = SUPPORTED_MODELS[0]
 
 # ---------------------------------------------------------
 # Safety Settings
@@ -122,25 +116,17 @@ SYSTEM_PROMPT = """
 ছবিতে থাকা বাংলা এবং ইংরেজি হাতে লেখা ও ছাপানো টেক্সট নিখুঁতভাবে রূপান্তর করুন।
 
 বিশেষ নির্দেশাবলী:
-১. ছবিতে যদি কোনো ছক বা টেবিল থাকে (যেমন: প্রদত্ত শব্দ | শব্দের অর্থ), তাহলে সেটিকে অবশ্যই স্ট্যান্ডার্ড Markdown Table আকারে লিখবেন।
-উদাহরণ:
-| প্রদত্ত শব্দ | শব্দের অর্থ |
-| --- | --- |
-| অসি | কলম |
-| ইতি | শেষ |
-
-২. ছবিতে কোনো লাল কালির বা কাটাকাটি লেখা থাকলে, কাটাকাটির ভেতরের সঠিক শব্দটি পড়ে সুন্দরভাবে টাইপ করবেন।
-৩. অতিরিক্ত কোনো কথা বা ব্যাখ্যা দেবেন না। শুধুমাত্র ছবিতে থাকা পড়া অংশটি সঠিকভাবে সাজিয়ে আউটপুট দিন।
+১. সাধারণ টেক্সট, লাইন, নম্বর এবং প্রতিটি শব্দ নিখুঁতভাবে টাইপ করুন।
+২. ছবিতে যদি কোনো ছক বা টেবিল থাকে (যেমন: প্রদত্ত শব্দ | শব্দের অর্থ), তাহলে সেটিকে Markdown Table আকারে লিখবেন।
+৩. কাটাকাটি থাকলে কাটাকাটির ভেতরের সঠিক শব্দটি টাইপ করবেন।
+৪. অতিরিক্ত কোনো কথা বা ভূমিকা লিখবেন না।
 """
 
 # ---------------------------------------------------------
 # Image Compressor and Optimizer
 # ---------------------------------------------------------
 def optimize_and_convert_image(pil_img):
-    # অটো ওরিয়েন্টেশন ফিক্স
     pil_img = ImageOps.exif_transpose(pil_img)
-    
-    # সাইজ অপটিমাইজ করা (Max 1280px)
     max_size = (1280, 1280)
     pil_img.thumbnail(max_size, Image.Resampling.LANCZOS)
     
@@ -153,7 +139,7 @@ def optimize_and_convert_image(pil_img):
     }
 
 # ---------------------------------------------------------
-# Word Document Generator with Grid Borders
+# Word Document Generator
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
@@ -293,10 +279,24 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
         success = False
         optimized_payload = optimize_and_convert_image(img)
         
-        for attempt in range(3):
-            status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages} (ট্রাই: {attempt + 1})")
+        # ট্রাই করার জন্য একাধিক অফিশিয়াল মডেল টেস্ট করা হবে
+        for model_candidate in SUPPORTED_MODELS:
+            if success:
+                break
+                
             try:
-                response = model.generate_content(
+                current_model = genai.GenerativeModel(
+                    model_name=model_candidate,
+                    generation_config={
+                        "temperature": 0.1,
+                        "top_p": 0.95,
+                        "max_output_tokens": 4096,
+                    }
+                )
+                
+                status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages} (মডেল: {model_candidate})")
+                
+                response = current_model.generate_content(
                     [SYSTEM_PROMPT, optimized_payload],
                     safety_settings=safety_settings
                 )
@@ -307,18 +307,18 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                     success = True
                     break
                 else:
-                    time.sleep(2)
-                
+                    time.sleep(1)
+                    
             except Exception as e:
-                time.sleep(3)
-        
+                # মডেল নাম না মিললে বা এরর দিলে পরের অফিশিয়াল মডেলে অটো সুইচ করবে
+                continue
+
         if not success:
-            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি।]"
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি। অনুগ্রহ করে API Key বা ছবির ক্লারিটি চেক করুন।]"
             
         progress_bar.progress((index + 1) / total_pages)
 
     status_text.empty()
-    
     st.session_state.final_converted_text = combined_result
     st.session_state.conversion_done = True
 
@@ -326,9 +326,9 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 # Display Output & Downloads
 # ---------------------------------------------------------
 if st.session_state.conversion_done:
-    st.success("✅ কনভার্ট সফলভাবে সম্পন্ন হয়েছে!")
+    st.success("✅ কনভার্ট সম্পন্ন হয়েছে!")
 
-    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ (ছকসহ):")
+    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
     st.markdown(st.session_state.final_converted_text)
 
     col1, col2 = st.columns(2)
