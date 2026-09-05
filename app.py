@@ -6,6 +6,8 @@ import streamlit as st
 import google.generativeai as genai
 from docx import Document
 from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -18,7 +20,6 @@ from pdf2image import convert_from_bytes
 def clean_bengali_symbols(text):
     if not text:
         return ""
-    # অতিরিক্ত ডটেড সার্কেল বা ইনভ্যালিড ক্যারেক্টার রিমুভ
     cleaned_text = re.sub(r'\u25cc', '', text)
     return cleaned_text.replace('◌', '')
 
@@ -35,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | নিখুঁত প্রফেশনাল কনভার্সন সিস্টেম")
+st.caption("Developed by: Belal Hossain | আসল টেবিল ও রো-কলাম গ্রিড সাপোর্ট")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -74,13 +75,13 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Model Selection (অফিশিয়াল এবং পাওয়ারফুল Gemini 2.0 Flash)
+# Model Selection
 # ---------------------------------------------------------
 MODEL_NAME = 'gemini-2.0-flash'
 model = genai.GenerativeModel(MODEL_NAME)
 
 # ---------------------------------------------------------
-# Safety Settings (যাতে প্রসেসিং ফিল্টার না হয়)
+# Safety Settings
 # ---------------------------------------------------------
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -106,26 +107,79 @@ if 'conversion_done' not in st.session_state:
     st.session_state.conversion_done = False
 
 # ---------------------------------------------------------
-# Master AI Prompt (বাংলা ও গণিত নিখুঁত করার নির্দেশ)
+# Master AI Prompt
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
-আপনি একজন বিশেষজ্ঞ OCR ও বাংলা ডকুমেন্ট কনভার্সন সিস্টেম। 
+আপনি একজন বিশেষজ্ঞ OCR ও ডকুমেন্ট কনভার্সন সিস্টেম। 
 ছবিতে থাকা হ্যান্ডরিটেন বা টাইপ করা টেক্সটগুলো হুবহু সঠিক প্রমিত ইউনিকোড বাংলায় রূপান্তর করুন।
-- বাংলা যুক্তবর্ণ, মাত্রা এবং সংখ্যা (যেমন: ১, ২, ৩, ৪) যেন কোনোভাবেই না ভাঙে।
-- হেডিং থাকলে শুরুতে `# ` দিন।
-- আন্ডারলাইন থাকলে `<u>লেখা</u>` দিন।
-- ছক, টেবিল বা লিস্ট থাকলে তা সুন্দরভাবে সাজিয়ে উপস্থাপন করুন।
-- কোনো অনাকাঙ্ক্ষিত অক্ষর বা হাবিজাবি চিহ্ন আউটপুটে দেবেন না।
+
+খুবই গুরুত্বপূর্ণ নির্দেশাবলী (ছক বা টেবিলের জন্য):
+১. ছবিতে কোনো টেবিল বা ঘর থাকলে সেটিকে অবশ্যই Markdown Table ফরম্যাটে প্রদান করবেন।
+২. হেডিং থাকলে শুরুতে `# ` দিন।
+৩. যুক্তবর্ণ বা সংখ্যা যেন না ভাঙে।
 """
 
 # ---------------------------------------------------------
-# Word Document Generator
+# Word Document Generator with Real Grid Borders
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
     lines = text.split('\n')
+    
+    in_table = False
+    table_data = []
+
+    def flush_table(t_data):
+        if not t_data:
+            return
+        
+        # হেডার নির্দেশক লাইন (|---|---|) ফিল্টার
+        valid_rows = [r for r in t_data if not all(re.match(r'^[\s:-]+$', cell) for cell in r)]
+        if not valid_rows:
+            return
+            
+        max_cols = max(len(r) for r in valid_rows)
+        word_table = doc.add_table(rows=len(valid_rows), cols=max_cols)
+        
+        # আসল ঘর এবং চারপাশের বর্ডার স্টাইল নির্ধারণ
+        word_table.style = 'Table Grid'
+        word_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        
+        for r_idx, row in enumerate(valid_rows):
+            for c_idx, cell_value in enumerate(row):
+                if c_idx < max_cols:
+                    cell = word_table.cell(r_idx, c_idx)
+                    cell.text = cell_value.strip()
+                    
+                    # টেক্সট ফন্ট ও অ্যালাইনমেন্ট
+                    for p in cell.paragraphs:
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        for run in p.runs:
+                            run.font.size = Pt(font_size)
+                            if is_arabic(cell_value):
+                                run.font.name = arabic_font
+                            elif cell_value.isascii():
+                                run.font.name = english_font
+                            else:
+                                run.font.name = bangla_font
+                                
+        doc.add_paragraph()
+
     for line in lines:
-        if not line.strip():
+        stripped = line.strip()
+        
+        if stripped.startswith('|') and stripped.endswith('|'):
+            in_table = True
+            cells = [c.strip() for c in stripped.split('|')[1:-1]]
+            table_data.append(cells)
+            continue
+        else:
+            if in_table:
+                flush_table(table_data)
+                table_data = []
+                in_table = False
+
+        if not stripped:
             continue
             
         p = doc.add_paragraph()
@@ -139,32 +193,20 @@ def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
                 continue
                 
             run = p.add_run()
+            run.text = part
+            run.font.bold = is_heading
+            run.font.size = Pt(font_size + 3) if is_heading else Pt(font_size)
             
-            if part.startswith("[ইমেজ নোট:"):
-                run.text = part
-                run.font.bold = True
-                run.font.color.rgb = RGBColor(180, 50, 50)
-                run.font.name = bangla_font
-                run.font.size = Pt(font_size)
-            elif part.startswith("<u>") and part.endswith("</u>"):
-                clean_text = part[3:-4]
-                run.text = clean_text
-                run.font.underline = True
-                run.font.bold = is_heading
-                run.font.size = Pt(font_size + 3) if is_heading else Pt(font_size)
-                run.font.name = arabic_font if is_arabic(clean_text) else (english_font if clean_text.isascii() else bangla_font)
+            if is_arabic(part):
+                run.font.name = arabic_font
+            elif part.isascii():
+                run.font.name = english_font
             else:
-                run.text = part
-                run.font.bold = is_heading
-                run.font.size = Pt(font_size + 3) if is_heading else Pt(font_size)
-                
-                if is_arabic(part):
-                    run.font.name = arabic_font
-                elif part.isascii():
-                    run.font.name = english_font
-                else:
-                    run.font.name = bangla_font
-                    
+                run.font.name = bangla_font
+
+    if in_table:
+        flush_table(table_data)
+
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
@@ -197,7 +239,7 @@ def create_pdf(text, font_size):
     return buffer
 
 # ---------------------------------------------------------
-# Execution Logic with Automatic Rate Limit Retry
+# Execution Logic
 # ---------------------------------------------------------
 if uploaded_files and st.button("🚀 কনভার্ট শুরু করুন"):
     combined_result = ""
@@ -221,7 +263,7 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
         success = False
         
         for attempt in range(max_retries):
-            status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
+            status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages}")
             try:
                 response = model.generate_content(
                     [SYSTEM_PROMPT, img],
@@ -263,8 +305,9 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 if st.session_state.conversion_done:
     st.success("✅ কনভার্ট সম্পন্ন হয়েছে!")
 
-    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
-    st.text_area("আউটপুট টেক্সট (ইউনিকোড):", st.session_state.final_converted_text, height=350)
+    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ (রো-কলাম ছকসহ):")
+    # স্ক্রিনেও ঘর/টেবিল আকারে রেন্ডার করা
+    st.markdown(st.session_state.final_converted_text)
 
     col1, col2 = st.columns(2)
     
