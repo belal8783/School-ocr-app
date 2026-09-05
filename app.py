@@ -77,8 +77,8 @@ genai.configure(api_key=api_key)
 # ---------------------------------------------------------
 # Stable Model Selection
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-1.5-flash'
-model = genai.GenerativeModel(MODEL_NAME)
+MODEL_NAME = 'gemini-3.6-flash'
+model = genai.GenerativeModel('gemini-3.6-flash')
 
 # ---------------------------------------------------------
 # Safety Settings
