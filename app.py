@@ -18,6 +18,7 @@ from pdf2image import convert_from_bytes
 def clean_bengali_symbols(text):
     if not text:
         return ""
+    # অতিরিক্ত ডটেড সার্কেল বা ইনভ্যালিড ক্যারেক্টার রিমুভ
     cleaned_text = re.sub(r'\u25cc', '', text)
     return cleaned_text.replace('◌', '')
 
@@ -34,7 +35,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | কোটা হ্যান্ডলিং ও স্মার্ট কনভার্সন")
+st.caption("Developed by: Belal Hossain | নিখুঁত প্রফেশনাল কনভার্সন সিস্টেম")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -73,12 +74,13 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Model Selection (gemini-3.6-flash সরাসরি সেট করা হয়েছে)
+# Model Selection (অফিশিয়াল এবং পাওয়ারফুল Gemini 2.0 Flash)
 # ---------------------------------------------------------
-model = genai.GenerativeModel('gemini-3.6-flash')
+MODEL_NAME = 'gemini-2.0-flash'
+model = genai.GenerativeModel(MODEL_NAME)
 
 # ---------------------------------------------------------
-# Safety Settings (যাতে প্রসেসিং সেন্সর না হয়)
+# Safety Settings (যাতে প্রসেসিং ফিল্টার না হয়)
 # ---------------------------------------------------------
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -104,15 +106,16 @@ if 'conversion_done' not in st.session_state:
     st.session_state.conversion_done = False
 
 # ---------------------------------------------------------
-# Master AI Prompt
+# Master AI Prompt (বাংলা ও গণিত নিখুঁত করার নির্দেশ)
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
-আপনি একজন বিশেষজ্ঞ OCR ও ডকুমেন্ট কনভার্সন সিস্টেম। 
-ছবিতে থাকা হ্যান্ডরিটেন বা টাইপ করা টেক্সটগুলো হুবহু ইউনিকোড বাংলায় নিখুঁতভাবে রূপান্তর করুন।
+আপনি একজন বিশেষজ্ঞ OCR ও বাংলা ডকুমেন্ট কনভার্সন সিস্টেম। 
+ছবিতে থাকা হ্যান্ডরিটেন বা টাইপ করা টেক্সটগুলো হুবহু সঠিক প্রমিত ইউনিকোড বাংলায় রূপান্তর করুন।
+- বাংলা যুক্তবর্ণ, মাত্রা এবং সংখ্যা (যেমন: ১, ২, ৩, ৪) যেন কোনোভাবেই না ভাঙে।
 - হেডিং থাকলে শুরুতে `# ` দিন।
 - আন্ডারলাইন থাকলে `<u>লেখা</u>` দিন।
-- ছক বা টেবিল থাকলে তা Markdown Table ফরম্যাটে রাখুন।
-- ভুল বা অবোধ্য শব্দ থাকলে প্রমিত ইউনিকোড বাংলায় লিখুন।
+- ছক, টেবিল বা লিস্ট থাকলে তা সুন্দরভাবে সাজিয়ে উপস্থাপন করুন।
+- কোনো অনাকাঙ্ক্ষিত অক্ষর বা হাবিজাবি চিহ্ন আউটপুটে দেবেন না।
 """
 
 # ---------------------------------------------------------
@@ -214,12 +217,11 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     status_text = st.empty()
 
     for index, img in enumerate(images_to_process):
-        
         max_retries = 5
         success = False
         
         for attempt in range(max_retries):
-            status_text.text(f"প্রসেসিং চলছে (gemini-3.6-flash): পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
+            status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
             try:
                 response = model.generate_content(
                     [SYSTEM_PROMPT, img],
@@ -232,22 +234,21 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                 
                 if page_text.strip():
                     combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n" + page_text
+                    success = True
+                    break
                 else:
-                    combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[সতর্কতা: পৃষ্ঠা {index + 1} থেকে কোনো টেক্সট পাওয়া যায়নি।]"
-                
-                success = True
-                break
+                    time.sleep(2)
                 
             except Exception as e:
                 err_msg = str(e)
                 if "429" in err_msg or "Quota" in err_msg or "ResourceExhausted" in err_msg:
-                    status_text.warning(f"⚠️ এপিআই কোটা লিমিট পৌঁছেছে। ১৫ সেকেন্ড অপেক্ষা করে অটো-রিট্রি করা হচ্ছে (পৃষ্ঠা {index + 1})...")
-                    time.sleep(15)
+                    status_text.warning(f"⚠️ এপিআই লিমিটের জন্য ১০ সেকেন্ড অপেক্ষা করে অটো-রিট্রি করা হচ্ছে (পৃষ্ঠা {index + 1})...")
+                    time.sleep(10)
                 else:
                     time.sleep(3)
         
         if not success:
-            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: বারবার চেষ্টা করেও এপিআই কোটা লিমিটের জন্য প্রসেস করা যায়নি।]"
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি সঠিকভাবে প্রসেস করা সম্ভব হয়নি।]"
             
         progress_bar.progress((index + 1) / total_pages)
 
