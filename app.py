@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | আসল টেবিল ও রো-কলাম গ্রিড সাপোর্ট")
+st.caption("Developed by: Belal Hossain | ফিক্সড ও পারফেক্ট টেবিল প্রসেসিং")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -77,8 +77,8 @@ genai.configure(api_key=api_key)
 # ---------------------------------------------------------
 # Model Selection
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-3.6-flash'
-model = genai.GenerativeModel('gemini-3.6-flash')
+MODEL_NAME = 'gemini-1.5-flash' # অত্যন্ত স্ট্যাবল ও দ্রুত কাজ করে
+model = genai.GenerativeModel(MODEL_NAME)
 
 # ---------------------------------------------------------
 # Safety Settings
@@ -110,17 +110,32 @@ if 'conversion_done' not in st.session_state:
 # Master AI Prompt
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
-আপনি একজন বিশেষজ্ঞ OCR ও ডকুমেন্ট কনভার্সন সিস্টেম। 
-ছবিতে থাকা হ্যান্ডরিটেন বা টাইপ করা টেক্সটগুলো হুবহু সঠিক প্রমিত ইউনিকোড বাংলায় রূপান্তর করুন।
+আপনি একজন বিশেষজ্ঞ OCR সিস্টেম। ছবিতে থাকা টেক্সট ও টেবিল নিখুঁতভাবে রূপান্তর করুন।
 
-খুবই গুরুত্বপূর্ণ নির্দেশাবলী (ছক বা টেবিলের জন্য):
-১. ছবিতে কোনো টেবিল বা ঘর থাকলে সেটিকে অবশ্যই Markdown Table ফরম্যাটে প্রদান করবেন।
-২. হেডিং থাকলে শুরুতে `# ` দিন।
-৩. যুক্তবর্ণ বা সংখ্যা যেন না ভাঙে।
+গুরুত্বপূর্ণ নিয়মাবলি:
+১. ছবিতে কোনো ছক, ঘর বা টেবিল থাকলে সেটিকে অবশ্যই স্ট্যান্ডার্ড Markdown Table আকারে লিখবেন।
+উদাহরণ:
+| Measurements | S | M | L | XL | XXL |
+| --- | --- | --- | --- | --- | --- |
+| Length (Inches) | 26.5 | 28 | 29 | 30 | 31 |
+| Chest (Inches) | 19 | 19.75 | 20.5 | 21.5 | 22.5 |
+
+২. অতিরিক্ত কোনো কথা বা ব্যাখ্যা দেবেন না, শুধু কনভার্ট করা অংশটুকু আউটপুট দিন।
 """
 
 # ---------------------------------------------------------
-# Word Document Generator with Real Grid Borders
+# Helper: Convert PIL Image to Dict Bytes for Gemini
+# ---------------------------------------------------------
+def prepare_image_payload(pil_img):
+    img_byte_arr = io.BytesIO()
+    pil_img.convert('RGB').save(img_byte_arr, format='JPEG')
+    return {
+        'mime_type': 'image/jpeg',
+        'data': img_byte_arr.getvalue()
+    }
+
+# ---------------------------------------------------------
+# Word Document Generator with Real Table Grid
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
@@ -168,6 +183,7 @@ def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     for line in lines:
         stripped = line.strip()
         
+        # মার্কডাউন টেবিল ডিটেকশন
         if stripped.startswith('|') and stripped.endswith('|'):
             in_table = True
             cells = [c.strip() for c in stripped.split('|')[1:-1]]
@@ -252,29 +268,28 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                 converted_images = convert_from_bytes(pdf_bytes)
                 images_to_process.extend(converted_images)
             else:
-                images_to_process.append(Image.open(uploaded_file))
+                uploaded_file.seek(0) # বাফার রিসেট
+                img = Image.open(uploaded_file)
+                images_to_process.append(img)
 
     total_pages = len(images_to_process)
     progress_bar = st.progress(0)
     status_text = st.empty()
 
     for index, img in enumerate(images_to_process):
-        max_retries = 5
         success = False
+        img_payload = prepare_image_payload(img)
         
-        for attempt in range(max_retries):
-            status_text.text(f"প্রসেসিং চলছে ({MODEL_NAME}): পৃষ্ঠা {index + 1} / {total_pages}")
+        for attempt in range(3):
+            status_text.text(f"প্রসেস করা হচ্ছে: পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
             try:
                 response = model.generate_content(
-                    [SYSTEM_PROMPT, img],
+                    [SYSTEM_PROMPT, img_payload],
                     safety_settings=safety_settings
                 )
                 
-                page_text = ""
-                if response and hasattr(response, 'text'):
+                if response and hasattr(response, 'text') and response.text.strip():
                     page_text = clean_bengali_symbols(response.text)
-                
-                if page_text.strip():
                     combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n" + page_text
                     success = True
                     break
@@ -282,12 +297,7 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                     time.sleep(2)
                 
             except Exception as e:
-                err_msg = str(e)
-                if "429" in err_msg or "Quota" in err_msg or "ResourceExhausted" in err_msg:
-                    status_text.warning(f"⚠️ এপিআই লিমিটের জন্য ১০ সেকেন্ড অপেক্ষা করে অটো-রিট্রি করা হচ্ছে (পৃষ্ঠা {index + 1})...")
-                    time.sleep(10)
-                else:
-                    time.sleep(3)
+                time.sleep(3)
         
         if not success:
             combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি সঠিকভাবে প্রসেস করা সম্ভব হয়নি।]"
@@ -303,10 +313,9 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 # Display Output & Downloads
 # ---------------------------------------------------------
 if st.session_state.conversion_done:
-    st.success("✅ কনভার্ট সম্পন্ন হয়েছে!")
+    st.success("✅ সফলভাবে কনভার্ট সম্পন্ন হয়েছে!")
 
-    st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ (রো-কলাম ছকসহ):")
-    # স্ক্রিনেও ঘর/টেবিল আকারে রেন্ডার করা
+    st.subheader("📝 কনভার্ট হওয়া আউটপুট (লাইভ টেবিল প্রিভিউ):")
     st.markdown(st.session_state.final_converted_text)
 
     col1, col2 = st.columns(2)
