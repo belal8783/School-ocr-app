@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | Updated to Gemini 3.6 Flash")
+st.caption("Developed by: Belal Hossain | Gemini 3.6 Flash Active")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -75,7 +75,7 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Model Selection (Updated to Gemini 3.6 Flash as per API instruction)
+# Model Selection
 # ---------------------------------------------------------
 MODEL_NAME = 'gemini-3.6-flash'
 model = genai.GenerativeModel(MODEL_NAME)
@@ -235,13 +235,13 @@ def create_pdf(text, font_size):
     return buffer
 
 # ---------------------------------------------------------
-# Processing Logic
+# Processing Logic with Automatic Rate Limit Handling
 # ---------------------------------------------------------
 if uploaded_files and st.button("🚀 কনভার্ট শুরু করুন"):
     combined_result = ""
     images_to_process = []
 
-    with st.spinner("ফাইল মেমোরিতে নেওয়া হচ্ছে..."):
+    with st.spinner("ফাইল প্রসেস করা হচ্ছে..."):
         for uploaded_file in uploaded_files:
             if uploaded_file.name.lower().endswith(".pdf"):
                 pdf_bytes = uploaded_file.read()
@@ -261,8 +261,12 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
         img = ImageOps.exif_transpose(img)
         last_error = ""
 
-        for attempt in range(2):
-            status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages}")
+        # Rate Limit এড়াতে প্রতি পেজের মাঝে ১ সেকেন্ড বিরতি
+        if index > 0:
+            time.sleep(1.5)
+
+        for attempt in range(3):
+            status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages} (চেষ্টা: {attempt + 1})")
             try:
                 response = model.generate_content(
                     [SYSTEM_PROMPT, img],
@@ -275,11 +279,16 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                     success = True
                     break
                 else:
-                    time.sleep(1)
+                    time.sleep(2)
                 
             except Exception as e:
                 last_error = str(e)
-                time.sleep(2)
+                # 429 Rate limit এলে একটু বেশি সময় অপেক্ষা করবে
+                if "429" in last_error:
+                    status_text.text(f"⏳ লিমিট ওভার হয়েছে, ১০ সেকেন্ড অপেক্ষা করে আবার চেষ্টা করা হচ্ছে...")
+                    time.sleep(10)
+                else:
+                    time.sleep(3)
         
         if not success:
             combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: {last_error if last_error else 'পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি'}]"
