@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("📝 School Sheet Handwritten to Word & PDF Agent")
-st.caption("Developed by: Belal Hossain | Fixed & Stable OCR Solution")
+st.caption("Developed by: Belal Hossain | Fixed & Production Ready")
 
 # ---------------------------------------------------------
 # Sidebar Options
@@ -69,16 +69,16 @@ if not api_key:
     api_key = st.sidebar.text_input("Gemini API Key দিন:", type="password")
 
 if not api_key:
-    st.info("⚠️ অ্যাপটি চালাতে Gemini API Key প্রয়োজন।")
+    st.warning("⚠️ অ্যাপটি চালাতে আপনার Gemini API Key দিন।")
     st.stop()
 
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# Stable Model Selection
+# Model Selection (Fixed)
 # ---------------------------------------------------------
-MODEL_NAME = 'gemini-3.6-flash'
-model = genai.GenerativeModel('gemini-3.6-flash')
+MODEL_NAME = 'gemini-2.5-flash'
+model = genai.GenerativeModel(MODEL_NAME)
 
 # ---------------------------------------------------------
 # Safety Settings
@@ -110,17 +110,17 @@ if 'conversion_done' not in st.session_state:
 # System Prompt
 # ---------------------------------------------------------
 SYSTEM_PROMPT = """
-আপনি একজন নিখুঁত OCR ট্রান্সক্রিপশন সিস্টেম।
-ছবিতে থাকা বাংলা, ইংরেজি বা আরবি যেকোনো হাতে লেখা বা টাইপ করা টেক্সট হুবহু রূপান্তর করুন।
+আপনি একজন বিশেষজ্ঞ বাংলা OCR সিস্টেম।
+ছবিতে থাকা বাংলা, ইংরেজি এবং হাতে লেখা লেখা নিখুঁতভাবে ইউনিকোডে রূপান্তর করুন।
 
 নির্দেশনা:
-১. পেজের সাধারণ লাইন, প্রশ্ন, উত্তর ও নম্বর যেভাবে আছে সেভাবেই বাংলায় সঠিক ইউনিকোডে লিখবেন।
-২. ছবিতে যদি কোনো ছক বা টেবিল থাকে, তবে সেটিকে Markdown Table ফরম্যাটে লিখুন। (যেমন: | শব্দ | অর্থ |)
-৩. অতিরিক্ত কোনো কথা, শুভেচ্ছা বা ব্যাখ্যা লিখবেন না। শুধু পেজের কনটেন্টটুকু আউটপুট দিন।
+১. পেজের সাধারণ লাইন, প্রশ্ন, নম্বর সম্পূর্ণ হুবহু লিখবেন।
+২. ছবিতে যদি কোনো টেবিল বা ঘর থাকে, তবে সেটি Markdown Table আকারে লিখবেন (যেমন: | শব্দ | অর্থ |)।
+৩. অতিরিক্ত কোনো ভূমিকা বা ব্যাখ্যা দেবেন না।
 """
 
 # ---------------------------------------------------------
-# Word Document Generator with Table Support
+# Word Document Generator
 # ---------------------------------------------------------
 def create_word_docx(text, bangla_font, english_font, arabic_font, font_size):
     doc = Document()
@@ -241,7 +241,7 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     combined_result = ""
     images_to_process = []
 
-    with st.spinner("ফাইল লোড হচ্ছে..."):
+    with st.spinner("ফাইল মেমোরিতে নেওয়া হচ্ছে..."):
         for uploaded_file in uploaded_files:
             if uploaded_file.name.lower().endswith(".pdf"):
                 pdf_bytes = uploaded_file.read()
@@ -259,8 +259,9 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
     for index, img in enumerate(images_to_process):
         success = False
         img = ImageOps.exif_transpose(img)
-        
-        for attempt in range(3):
+        last_error = ""
+
+        for attempt in range(2):
             status_text.text(f"প্রসেসিং চলছে: পৃষ্ঠা {index + 1} / {total_pages}")
             try:
                 response = model.generate_content(
@@ -274,13 +275,14 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
                     success = True
                     break
                 else:
-                    time.sleep(2)
+                    time.sleep(1)
                 
             except Exception as e:
-                time.sleep(3)
+                last_error = str(e)
+                time.sleep(2)
         
         if not success:
-            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি।]"
+            combined_result += f"\n\n--- পৃষ্ঠা {index + 1} ---\n\n[এরর: {last_error if last_error else 'পৃষ্ঠাটি প্রসেস করা সম্ভব হয়নি'}]"
             
         progress_bar.progress((index + 1) / total_pages)
 
@@ -292,7 +294,7 @@ if uploaded_files and st.button("🚀 কনভার্ট শুরু কর�
 # Output Section
 # ---------------------------------------------------------
 if st.session_state.conversion_done:
-    st.success("✅ কনভার্ট সম্পন্ন হয়েছে!")
+    st.success("✅ কনভার্ট প্রক্রিয়া শেষ হয়েছে!")
 
     st.subheader("📝 কনভার্ট হওয়া টেক্সট প্রিভিউ:")
     st.markdown(st.session_state.final_converted_text)
